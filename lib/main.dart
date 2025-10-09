@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -18,8 +19,10 @@ void main() async {
     );
     print('✅ Firebase initialized successfully');
     
-    FirebaseDatabase.instance.setPersistenceEnabled(true);
-    FirebaseDatabase.instance.setPersistenceCacheSizeBytes(10000000);
+      if (!kIsWeb) {
+       FirebaseDatabase.instance.setPersistenceEnabled(true);
+       FirebaseDatabase.instance.setPersistenceCacheSizeBytes(10000000);
+    }
     
     runApp(const AutosureApp());
   } catch (e) {

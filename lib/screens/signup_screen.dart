@@ -168,7 +168,7 @@ class _SignupScreenState extends State<SignupScreen> with TickerProviderStateMix
 
 Future<void> _handleSignup() async {
   if (!mounted) return;
-  
+
   // Validation
   if (_nameController.text.isEmpty || 
       _surnameController.text.isEmpty || 
@@ -178,25 +178,23 @@ Future<void> _handleSignup() async {
     return;
   }
 
+  if (!_termsAccepted) {
+    _showErrorDialog('Please accept the Terms & Conditions');
+    return;
+  }
+
   setState(() => _isLoading = true);
 
   try {
     print('🚀 STEP 1: Starting Firebase Auth signup...');
-    
-    // Create user with Firebase Authentication
     final UserCredential userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
       email: _emailController.text.trim(),
       password: _passwordController.text,
     );
-
     print('✅ STEP 1 COMPLETE: User created in Auth - UID: ${userCredential.user!.uid}');
-    print('📧 User email: ${userCredential.user!.email}');
 
-    // Save user data to Realtime Database
     print('🚀 STEP 2: Saving to Realtime Database...');
-    
     final DatabaseReference userRef = FirebaseDatabase.instance.ref('users/${userCredential.user!.uid}');
-    
     final userData = {
       'firstName': _nameController.text.trim(),
       'lastName': _surnameController.text.trim(),
@@ -204,53 +202,36 @@ Future<void> _handleSignup() async {
       'isAdmin': _isAdmin,
       'createdAt': ServerValue.timestamp,
     };
+    await userRef.set(userData);
+    print('✅ STEP 2 COMPLETE: User data saved to Realtime Database!');
 
-    print('📝 User data to save: $userData');
-    print('🔗 Database path: users/${userCredential.user!.uid}');
-
-    // Test database connection first
-    try {
-      await userRef.set(userData);
-      print('✅ STEP 2 COMPLETE: User data saved to Realtime Database!');
-      print('🎉 SIGNUP SUCCESSFUL!');
-    } catch (dbError) {
-      print('❌ DATABASE ERROR: $dbError');
-      print('🔧 Database error details: ${dbError.toString()}');
-      
-      // If database fails, delete the auth user to keep things clean
-      await userCredential.user!.delete();
-      print('🗑️ Deleted auth user due to database failure');
-      
-      _showErrorDialog('Database error: Unable to save user profile. Please try again.');
-      setState(() => _isLoading = false);
-      return;
+    if (mounted) {
+      print('🔄 FORCING NAVIGATION...');
+      final username = '${_nameController.text.trim()} ${_surnameController.text.trim()}';
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (context) => _isAdmin 
+              ? const AdminDashboard() 
+              : HomeScreen(username: username),
+        ),
+        (Route<dynamic> route) => false,
+      );
+      print('🎉 NAVIGATION COMPLETE!');
     }
-
   } on FirebaseAuthException catch (e) {
     print('❌ AUTH ERROR: ${e.code} - ${e.message}');
     String errorMessage = 'An error occurred during signup';
-    
-    if (e.code == 'email-already-in-use') {
-      errorMessage = 'This email is already registered. Please use a different email.';
-    } else if (e.code == 'weak-password') {
-      errorMessage = 'Password is too weak. Please use a stronger password.';
-    } else if (e.code == 'invalid-email') {
-      errorMessage = 'Invalid email address. Please check your email.';
-    } else if (e.code == 'operation-not-allowed') {
-      errorMessage = 'Email/password accounts are not enabled. Please contact support.';
-    } else if (e.code == 'network-request-failed') {
-      errorMessage = 'Network error. Please check your internet connection.';
-    }
-    
+    if (e.code == 'email-already-in-use') errorMessage = 'Email already registered.';
+    else if (e.code == 'weak-password') errorMessage = 'Password too weak.';
+    else if (e.code == 'invalid-email') errorMessage = 'Invalid email address.';
     _showErrorDialog(errorMessage);
-    setState(() => _isLoading = false);
   } catch (e) {
     print('❌ UNEXPECTED ERROR: $e');
-    print('🔧 Error type: ${e.runtimeType}');
-    _showErrorDialog('An unexpected error occurred: ${e.toString()}');
-    setState(() => _isLoading = false);
+    _showErrorDialog('An unexpected error occurred. Try again.');
+  } finally {
+    if (mounted) setState(() => _isLoading = false); // Ensure loading stops
   }
-}  
+}
 
   void _showErrorDialog(String message) {
     showDialog(

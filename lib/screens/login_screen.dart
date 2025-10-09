@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'signup_screen.dart';
 import 'home_screen.dart';
 import 'admin_dashboard.dart';
@@ -49,7 +50,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     );
     
     _scaleAnimation = Tween<double>(
-      begin: 0.5,
+      begin: 0.8, // Changed from 0.5 to match signup
       end: 1.0,
     ).animate(CurvedAnimation(
       parent: _masterController,
@@ -65,7 +66,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     ));
     
     _slideAnimation = Tween<Offset>(
-      begin: const Offset(0.0, 0.3),
+      begin: const Offset(0.0, 0.2), // Changed from 0.3 to match signup
       end: Offset.zero,
     ).animate(CurvedAnimation(
       parent: _formController,
@@ -73,7 +74,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     ));
 
     _masterController.forward();
-    Future.delayed(const Duration(milliseconds: 600), () {
+    Future.delayed(const Duration(milliseconds: 400), () { // Reduced delay to match signup
       _formController.forward();
     });
 
@@ -127,7 +128,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
   Future<void> _handleLogin() async {
     if (!mounted) return;
-    
+
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       _showErrorDialog('Please fill in all fields');
       return;
@@ -136,105 +137,59 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     setState(() => _isLoading = true);
 
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      // Step 1: Firebase Auth login
+      final userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
 
-      // The AuthWrapper will automatically handle navigation based on user type
-      // No need to navigate manually here
+      final user = userCredential.user;
+      if (user == null) throw Exception("No user found");
+
+      // Step 2: Get user details from Realtime Database
+      final userRef = FirebaseDatabase.instance.ref("users/${user.uid}");
+      final snapshot = await userRef.get();
+
+      String username = "User";
+      bool isAdmin = false;
+
+      if (snapshot.exists && snapshot.value != null) {
+        final data = Map<String, dynamic>.from(snapshot.value as Map);
+        username = "${data['firstName'] ?? ''} ${data['lastName'] ?? ''}".trim();
+        isAdmin = data['isAdmin'] == true || data['role'] == "admin";
+      }
+
+      // Step 3: Debugging print (optional)
+      print("✅ Login successful → ${isAdmin ? 'Admin' : 'Normal User'}");
+      print("👤 Username: $username");
+
+      // Step 4: Stop loading before navigation
+      if (mounted) setState(() => _isLoading = false);
+
+      // Step 5: Redirect based on role
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => isAdmin
+              ? const AdminDashboard()
+              : HomeScreen(username: username.isEmpty ? "User" : username),
+        ),
+        (route) => false,
+      );
 
     } on FirebaseAuthException catch (e) {
-      String errorMessage = 'An error occurred during login';
-      
-      if (e.code == 'user-not-found') {
-        errorMessage = 'No account found with this email. Please sign up.';
-      } else if (e.code == 'wrong-password') {
-        errorMessage = 'Incorrect password. Please try again.';
-      } else if (e.code == 'invalid-email') {
-        errorMessage = 'Invalid email address. Please check your email.';
-      } else if (e.code == 'user-disabled') {
-        errorMessage = 'This account has been disabled. Please contact support.';
-      } else if (e.code == 'too-many-requests') {
-        errorMessage = 'Too many failed login attempts. Please try again later.';
-      }
-      
-      _showErrorDialog(errorMessage);
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    } catch (e) {
-      _showErrorDialog('An unexpected error occurred. Please try again.');
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
+      setState(() => _isLoading = false);
 
-  Future<void> _handleForgotPassword() async {
-    if (_emailController.text.isEmpty) {
-      _showErrorDialog('Please enter your email address to reset password.');
-      return;
-    }
+      String message = 'Login failed. Please try again.';
+      if (e.code == 'user-not-found') message = 'No account found with this email.';
+      else if (e.code == 'wrong-password') message = 'Incorrect password.';
+      else if (e.code == 'invalid-email') message = 'Invalid email format.';
+      else if (e.code == 'too-many-requests') message = 'Too many failed attempts. Try later.';
 
-    final email = _emailController.text.trim();
-    
-    try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
-      
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            backgroundColor: const Color.fromARGB(255, 16, 52, 90),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: Colors.white.withOpacity(0.2)),
-            ),
-            title: Text(
-              'Password Reset',
-              style: GoogleFonts.poppins(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            content: Text(
-              'Password reset link has been sent to $email. Please check your email.',
-              style: GoogleFonts.poppins(color: Colors.white70),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                style: TextButton.styleFrom(
-                  backgroundColor: Colors.blueAccent.withOpacity(0.1),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: Text(
-                  'OK',
-                  style: GoogleFonts.poppins(
-                    color: Colors.blueAccent,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-      String errorMessage = 'Failed to send password reset email';
-      
-      if (e.code == 'user-not-found') {
-        errorMessage = 'No account found with this email address.';
-      } else if (e.code == 'invalid-email') {
-        errorMessage = 'Invalid email address format.';
-      }
-      
-      _showErrorDialog(errorMessage);
+      _showErrorDialog(message);
     } catch (e) {
-      _showErrorDialog('Failed to send password reset email. Please try again.');
+      setState(() => _isLoading = false);
+      _showErrorDialog('Unexpected error: ${e.toString()}');
     }
   }
 
@@ -285,21 +240,10 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        leading: Navigator.canPop(context)
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white70),
-                onPressed: () => Navigator.pop(context),
-                splashRadius: 20,
-              )
-            : null,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white70),
-      ),
       backgroundColor: const Color.fromARGB(255, 16, 52, 90),
       body: Stack(
         children: [
+          // Static background
           Container(
             decoration: const BoxDecoration(
               gradient: RadialGradient(
@@ -315,239 +259,348 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
             ),
           ),
           
+          // Animated Background
           if (_glowController != null) _buildAnimatedBackground(),
           
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // Logo with Premium Animation
-                    ScaleTransition(
-                      scale: _scaleAnimation,
-                      child: Container(
-                        width: 150,
-                        height: 150,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.blueAccent.withOpacity(0.3),
-                              blurRadius: 30,
-                              spreadRadius: 5,
-                            ),
-                          ],
-                        ),
-                        child: const AutoSureLogo(
-                          size: 120,
-                          animated: true,
-                        ),
-                      ),
-                    ),
-                    
-                    const SizedBox(height: 30),
-                    
-                    // Welcome Text with Fade Animation
-                    FadeTransition(
-                      opacity: _fadeAnimation,
-                      child: Column(
-                        children: [
-                          Text(
-                            "Welcome Back",
-                            textAlign: TextAlign.center,
-                            style: GoogleFonts.poppins(
-                              color: Colors.white,
-                              fontSize: 32,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.1,
-                              shadows: [
-                                Shadow(
-                                  color: Colors.black.withOpacity(0.5),
-                                  offset: const Offset(2, 2),
-                                  blurRadius: 6,
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            "Security in Motion - Premium vehicle protection",
-                            textAlign: TextAlign.center,
-                            style: GoogleFonts.poppins(
-                              color: Colors.white70,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w400,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    
-                    const SizedBox(height: 40),
-                    
-                    // Premium Glass Login Form
-                    SlideTransition(
-                      position: _slideAnimation,
-                      child: FadeTransition(
-                        opacity: _fadeAnimation,
-                        child: MouseRegion(
-                          onEnter: (_) {
-                            if (mounted) {
-                              setState(() => _isHovering = true);
-                            }
-                          },
-                          onExit: (_) {
-                            if (mounted) {
-                              setState(() => _isHovering = false);
-                            }
-                          },
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 300),
-                            padding: const EdgeInsets.all(30),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(_isHovering ? 0.18 : 0.15),
-                              borderRadius: BorderRadius.circular(24),
-                              border: Border.all(
-                                color: Colors.white.withOpacity(_isHovering ? 0.3 : 0.2),
-                                width: 1.5,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.3),
-                                  blurRadius: 20,
-                                  spreadRadius: 5,
-                                  offset: const Offset(0, 10),
-                                ),
-                                if (_isHovering)
-                                  BoxShadow(
-                                    color: Colors.blueAccent.withOpacity(0.2),
-                                    blurRadius: 30,
-                                    spreadRadius: 10,
-                                  ),
-                              ],
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  Colors.white.withOpacity(0.12),
-                                  Colors.white.withOpacity(0.05),
-                                  Colors.white.withOpacity(0.02),
-                                ],
-                                stops: const [0.0, 0.5, 1.0],
-                              ),
-                            ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // Header
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    "Log In",
-                                    style: GoogleFonts.poppins(
-                                      color: Colors.white,
-                                      fontSize: 28,
-                                      fontWeight: FontWeight.w600,
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                ),
-                                
-                                const SizedBox(height: 30),
-                                
-                                // Email Field
-                                _buildPremiumTextField(
-                                  controller: _emailController,
-                                  focusNode: _emailFocusNode,
-                                  isFocused: _isEmailFocused,
-                                  hintText: "Email address",
-                                  prefixIcon: Icons.email_rounded,
-                                ),
-                                
-                                const SizedBox(height: 20),
-                                
-                                // Password Field
-                                _buildPremiumTextField(
-                                  controller: _passwordController,
-                                  focusNode: _passwordFocusNode,
-                                  isFocused: _isPasswordFocused,
-                                  hintText: "Password",
-                                  prefixIcon: Icons.lock_rounded,
-                                  isPassword: true,
-                                ),
-                                
-                                const SizedBox(height: 15),
-                                
-                                // Forgot Password
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: GestureDetector(
-                                    onTap: _handleForgotPassword,
-                                    child: Text(
-                                      "Forgot Password?",
-                                      style: GoogleFonts.poppins(
-                                        color: Colors.blueAccent.shade200,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                
-                                const SizedBox(height: 30),
-                                
-                                // Login Button
-                                _isLoading
-                                    ? _buildLoadingIndicator()
-                                    : _buildPremiumLoginButton(),
-                                
-                                const SizedBox(height: 25),
-                                
-                                // Divider
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Divider(
-                                        color: Colors.white.withOpacity(0.3),
-                                        thickness: 1,
-                                      ),
-                                    ),
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 15),
-                                      child: Text(
-                                        "OR",
-                                        style: GoogleFonts.poppins(
-                                          color: Colors.white54,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: Divider(
-                                        color: Colors.white.withOpacity(0.3),
-                                        thickness: 1,
-                                      ),
+                child: ScaleTransition(
+                  scale: _scaleAnimation,
+                  child: FadeTransition(
+                    opacity: _fadeAnimation,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const SizedBox(height: 20),
+                        
+                        // Header Section - Matches signup structure
+                        SlideTransition(
+                          position: _slideAnimation,
+                          child: Column(
+                            children: [
+                              // Logo with Premium Animation
+                              Container(
+                                width: 120,
+                                height: 120,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.blueAccent.withOpacity(0.3),
+                                      blurRadius: 30,
+                                      spreadRadius: 5,
                                     ),
                                   ],
                                 ),
-                                
-                                const SizedBox(height: 25),
-                                
-                                // Sign Up Button
-                                _buildPremiumSignUpButton(),
-                              ],
+                                child: const AutoSureLogo(
+                                  size: 100,
+                                  animated: true,
+                                ),
+                              ),
+                              const SizedBox(height: 20),
+                              Text(
+                                "Welcome Back",
+                                style: GoogleFonts.poppins(
+                                  color: Colors.white,
+                                  fontSize: 36,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1.1,
+                                  shadows: [
+                                    Shadow(
+                                      color: Colors.black.withOpacity(0.5),
+                                      offset: const Offset(2, 2),
+                                      blurRadius: 6,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                "Sign in to your Autosure account",
+                                style: GoogleFonts.poppins(
+                                  color: Colors.white70,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w400,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 40),
+                        
+                        // Premium Glass Login Form
+                        SlideTransition(
+                          position: _slideAnimation,
+                          child: FadeTransition(
+                            opacity: _fadeAnimation,
+                            child: MouseRegion(
+                              onEnter: (_) {
+                                if (mounted) {
+                                  setState(() => _isHovering = true);
+                                }
+                              },
+                              onExit: (_) {
+                                if (mounted) {
+                                  setState(() => _isHovering = false);
+                                }
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 300),
+                                padding: const EdgeInsets.all(30),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(_isHovering ? 0.18 : 0.15),
+                                  borderRadius: BorderRadius.circular(24),
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(_isHovering ? 0.3 : 0.2),
+                                    width: 1.5,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.3),
+                                      blurRadius: 20,
+                                      spreadRadius: 5,
+                                      offset: const Offset(0, 10),
+                                    ),
+                                    if (_isHovering)
+                                      BoxShadow(
+                                        color: Colors.blueAccent.withOpacity(0.2),
+                                        blurRadius: 30,
+                                        spreadRadius: 10,
+                                      ),
+                                  ],
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      Colors.white.withOpacity(0.12),
+                                      Colors.white.withOpacity(0.05),
+                                      Colors.white.withOpacity(0.02),
+                                    ],
+                                    stops: const [0.0, 0.5, 1.0],
+                                  ),
+                                ),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // Header - Matches signup style
+                                    Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: Text(
+                                        "Log In",
+                                        style: GoogleFonts.poppins(
+                                          color: Colors.white,
+                                          fontSize: 28,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ),
+                                    
+                                    const SizedBox(height: 30),
+                                    
+                                    // Email Field
+                                    _buildPremiumTextField(
+                                      controller: _emailController,
+                                      focusNode: _emailFocusNode,
+                                      isFocused: _isEmailFocused,
+                                      hintText: "Email address",
+                                      prefixIcon: Icons.email_rounded,
+                                    ),
+                                    
+                                    const SizedBox(height: 20),
+                                    
+                                    // Password Field
+                                    _buildPremiumTextField(
+                                      controller: _passwordController,
+                                      focusNode: _passwordFocusNode,
+                                      isFocused: _isPasswordFocused,
+                                      hintText: "Password",
+                                      prefixIcon: Icons.lock_rounded,
+                                      isPassword: true,
+                                    ),
+                                    
+                                    const SizedBox(height: 15),
+                                    
+                                    // Forgot Password
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: GestureDetector(
+                                        onTap: _handleForgotPassword,
+                                        child: Text(
+                                          "Forgot Password?",
+                                          style: GoogleFonts.poppins(
+                                            color: Colors.blueAccent.shade200,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    
+                                    const SizedBox(height: 30),
+                                    
+                                    // Login Button
+                                    _isLoading
+                                        ? _buildLoadingIndicator()
+                                        : _buildPremiumLoginButton(),
+                                    
+                                    const SizedBox(height: 25),
+                                    
+                                    // Divider with "OR" text
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Divider(
+                                            color: Colors.white.withOpacity(0.3),
+                                            thickness: 1,
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 15),
+                                          child: Text(
+                                            "OR",
+                                            style: GoogleFonts.poppins(
+                                              color: Colors.white54,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Divider(
+                                            color: Colors.white.withOpacity(0.3),
+                                            thickness: 1,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    
+                                    const SizedBox(height: 25),
+                                    
+                                    // Sign Up Button
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          "Don't have an account? ",
+                                          style: GoogleFonts.poppins(
+                                            color: Colors.white54,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        GestureDetector(
+                                          onTap: () {
+                                            Navigator.push(
+                                              context,
+                                              PageRouteBuilder(
+                                                pageBuilder: (context, animation, secondaryAnimation) => const SignupScreen(),
+                                                transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                                                  const begin = Offset(1.0, 0.0);
+                                                  const end = Offset.zero;
+                                                  const curve = Curves.easeInOutQuart;
+                                                  var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+                                                  return SlideTransition(position: animation.drive(tween), child: child);
+                                                },
+                                                transitionDuration: const Duration(milliseconds: 800),
+                                              ),
+                                            );
+                                          },
+                                          child: Text(
+                                            "Sign Up",
+                                            style: GoogleFonts.poppins(
+                                              color: Colors.blueAccent.shade200,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                        
+                        const SizedBox(height: 40),
+                      ],
                     ),
-                    
-                    const SizedBox(height: 40),
-                  ],
+                  ),
                 ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleForgotPassword() {
+    if (_emailController.text.isEmpty) {
+      _showErrorDialog('Please enter your email to reset password.');
+      return;
+    }
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color.fromARGB(255, 16, 52, 90),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.white.withOpacity(0.2)),
+        ),
+        title: Text(
+          'Reset Password',
+          style: GoogleFonts.poppins(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        content: Text(
+          'We will send a password reset link to ${_emailController.text.trim()}',
+          style: GoogleFonts.poppins(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              backgroundColor: Colors.white.withOpacity(0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.poppins(
+                color: Colors.white70,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              FirebaseAuth.instance.sendPasswordResetEmail(email: _emailController.text.trim()).then((_) {
+                _showErrorDialog('Password reset email sent. Please check your inbox.');
+              }).catchError((error) {
+                _showErrorDialog('Failed to send reset email: ${error.toString()}');
+              });
+            },
+            style: TextButton.styleFrom(
+              backgroundColor: Colors.blueAccent.withOpacity(0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              'Send',
+              style: GoogleFonts.poppins(
+                color: Colors.blueAccent,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -639,7 +692,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
             colors: [
               Colors.blueAccent.shade400,
               Colors.lightBlue.shade400,
-              Colors.blueAccent.shade100,
+              Colors.blueAccent.shade200,
             ],
           ),
           boxShadow: [
@@ -692,7 +745,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
               colors: [
                 Colors.blueAccent.shade400,
                 Colors.lightBlue.shade400,
-                Colors.blueAccent.shade100,
+                Colors.blueAccent.shade200,
               ],
             ),
             boxShadow: [
@@ -772,51 +825,8 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     );
   }
 
-  Widget _buildPremiumSignUpButton() {
-    return OutlinedButton(
-      onPressed: () {
-        Navigator.push(
-          context,
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) => const SignupScreen(),
-            transitionsBuilder: (context, animation, secondaryAnimation, child) {
-              const begin = Offset(1.0, 0.0);
-              const end = Offset.zero;
-              const curve = Curves.easeInOutQuart;
-              var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-              return SlideTransition(position: animation.drive(tween), child: child);
-            },
-            transitionDuration: const Duration(milliseconds: 800),
-          ),
-        );
-      },
-      style: OutlinedButton.styleFrom(
-        side: BorderSide(
-          color: Colors.white.withOpacity(0.3),
-          width: 1.5,
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        backgroundColor: Colors.transparent,
-      ),
-      child: Text(
-        "CREATE ACCOUNT",
-        style: GoogleFonts.poppins(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 1.1,
-          color: Colors.white,
-        ),
-      ),
-    );
-  }
-
   Widget _buildAnimatedBackground() {
-    if (_glowController == null) {
-      return const SizedBox.shrink();
-    }
+    if (_glowController == null) return const SizedBox.shrink();
 
     return AnimatedBuilder(
       animation: _glowController!,

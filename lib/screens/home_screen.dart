@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'get_quote_screen.dart';
 import 'apply_insurance_screen.dart';
 import 'plans_screen.dart';
 import 'admin_dashboard.dart';
 import 'login_screen.dart';
+import 'claims_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final String username;
@@ -28,13 +31,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _showFloatingHeader = true;
 
   final ScrollController _scrollController = ScrollController();
-  // Removed unused _appBarKey field
+  final DatabaseReference _policiesRef = FirebaseDatabase.instance.ref('policies');
+  final DatabaseReference _usersRef = FirebaseDatabase.instance.ref('users');
+  final DatabaseReference _claimsRef = FirebaseDatabase.instance.ref('claims');
+
+  // Live data from Firebase
+  List<Map<String, dynamic>> _userPolicies = [];
+  List<Map<String, dynamic>> _userClaims = [];
+  Map<String, dynamic> _userStats = {
+    'activePolicy': 'No Policy',
+    'nextRenewal': 'N/A',
+    'totalClaims': '0',
+    'riskScore': 'N/A',
+  };
 
   @override
   void initState() {
     super.initState();
     _initializeControllers();
     _setupScrollListener();
+    _loadUserData();
+    _checkAdminStatus();
   }
 
   void _initializeControllers() {
@@ -61,8 +78,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       CurvedAnimation(parent: _masterController, curve: Curves.elasticOut),
     );
     
-    
-    
     _masterController.forward();
   }
 
@@ -73,6 +88,91 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _showFloatingHeader = _scrollOffset < 100;
       });
     });
+  }
+
+  void _loadUserData() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // Load user policies
+    _policiesRef.orderByChild('userId').equalTo(user.uid).onValue.listen((event) {
+      final data = event.snapshot.value;
+      if (data != null && data is Map) {
+        setState(() {
+          _userPolicies = _convertFirebaseDataToList(data);
+          _updateUserStats();
+        });
+      }
+    });
+
+    // Load user claims
+    _claimsRef.orderByChild('userId').equalTo(user.uid).onValue.listen((event) {
+      final data = event.snapshot.value;
+      if (data != null && data is Map) {
+        setState(() {
+          _userClaims = _convertFirebaseDataToList(data);
+          _updateUserStats();
+        });
+      }
+    });
+  }
+
+  void _checkAdminStatus() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    _usersRef.child(user.uid).onValue.listen((event) {
+      final data = event.snapshot.value;
+      if (data != null && data is Map) {
+        setState(() {
+          _isAdmin = data['isAdmin'] == true || data['role'] == 'admin';
+        });
+      }
+    });
+  }
+
+  List<Map<String, dynamic>> _convertFirebaseDataToList(Map data) {
+    return data.entries.map((entry) {
+      final itemData = Map<String, dynamic>.from(entry.value as Map);
+      return {
+        'id': entry.key,
+        ...itemData,
+      };
+    }).toList();
+  }
+
+  void _updateUserStats() {
+    final activePolicy = _userPolicies.firstWhere(
+      (policy) => policy['status'] == 'Active',
+      orElse: () => {},
+    );
+
+    final totalClaims = _userClaims.length;
+    final approvedClaims = _userClaims.where((claim) => claim['status'] == 'Approved').length;
+
+    setState(() {
+      _userStats = {
+        'activePolicy': activePolicy.isNotEmpty ? activePolicy['policyType'] ?? 'Active' : 'No Policy',
+        'nextRenewal': _getNextRenewalDate(activePolicy),
+        'totalClaims': totalClaims.toString(),
+        'riskScore': totalClaims > 0 ? '${((approvedClaims / totalClaims) * 10).toStringAsFixed(1)}/10' : 'N/A',
+      };
+    });
+  }
+
+  String _getNextRenewalDate(Map<String, dynamic> policy) {
+    if (policy.isEmpty) return 'N/A';
+    
+    final endDate = policy['endDate'];
+    if (endDate == null) return 'N/A';
+    
+    final date = DateTime.fromMillisecondsSinceEpoch(endDate);
+    final now = DateTime.now();
+    
+    if (date.isBefore(now)) return 'Expired';
+    
+    final difference = date.difference(now).inDays;
+    return '$difference days';
   }
 
   @override
@@ -131,17 +231,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       backgroundColor: const Color.fromARGB(255, 8, 18, 32),
       body: Stack(
         children: [
-          // Advanced Animated Background
           _buildAdvancedBackground(),
-          
-          // Floating Quantum Particles
           _buildQuantumParticles(),
-          
           CustomScrollView(
             controller: _scrollController,
             physics: const BouncingScrollPhysics(),
             slivers: [
-              // Empty app bar for spacing
               const SliverAppBar(
                 expandedHeight: 120,
                 floating: false,
@@ -151,30 +246,259 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 backgroundColor: Colors.transparent,
                 automaticallyImplyLeading: false,
               ),
-              
-              // Main Content Grid
-              SliverToBoxAdapter(
-                child: _buildMainContent(),
-              ),
+              SliverToBoxAdapter(child: _getCurrentScreen()),
             ],
           ),
-          
-          // Floating Header
           _buildFloatingHeader(),
-          
-          // Back Button (positioned below floating header)
-          Positioned(
-            top: 140,
-            left: 25,
-            child: _buildBackButton(),
-          ),
+          Positioned(top: 140, left: 25, child: _buildBackButton()),
         ],
       ),
-      
-      // Minimal Navigation Bar
       bottomNavigationBar: _buildMinimalNavigationBar(),
     );
   }
+
+  Widget _getCurrentScreen() {
+    switch (_selectedIndex) {
+      case 0:
+        return _buildHomeScreen();
+      case 1:
+        return _buildPoliciesScreen();
+      case 2:
+        return _buildHistoryScreen();
+      case 3:
+        return _buildHelpScreen();
+      default:
+        return _buildHomeScreen();
+    }
+  }
+
+  Widget _buildHomeScreen() {
+    return Padding(
+      padding: const EdgeInsets.all(25.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildWelcomeSection(),
+          const SizedBox(height: 30),
+          _buildInsuranceOverview(),
+          const SizedBox(height: 30),
+          _buildServicesGrid(),
+          const SizedBox(height: 30),
+          _buildKnowledgeHub(),
+          const SizedBox(height: 30),
+          _buildRecentActivity(),
+          const SizedBox(height: 80),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPoliciesScreen() {
+    return Padding(
+      padding: const EdgeInsets.all(25.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "My Policies",
+            style: GoogleFonts.poppins(
+              fontSize: 32,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            "Manage your insurance policies and coverage",
+            style: GoogleFonts.poppins(
+              fontSize: 16,
+              color: Colors.white70,
+            ),
+          ),
+          const SizedBox(height: 30),
+          
+          if (_userPolicies.isEmpty) 
+            _buildNoPoliciesState()
+          else 
+            _buildPoliciesList(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPoliciesList() {
+    return Expanded(
+      child: ListView(
+        children: [
+          ..._userPolicies.map((policy) => _buildPolicyCard(policy)).toList(),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryScreen() {
+    return Padding(
+      padding: const EdgeInsets.all(25.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "History",
+            style: GoogleFonts.poppins(
+              fontSize: 32,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            "Your recent activity and transactions",
+            style: GoogleFonts.poppins(
+              fontSize: 16,
+              color: Colors.white70,
+            ),
+          ),
+          const SizedBox(height: 30),
+          
+          if (_userClaims.isEmpty && _userPolicies.isEmpty)
+            _buildNoActivityState()
+          else
+            Column(
+              children: _buildActivityItems(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHelpScreen() {
+    return Padding(
+      padding: const EdgeInsets.all(25.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Help & Support",
+            style: GoogleFonts.poppins(
+              fontSize: 32,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            "Get assistance and learn about our services",
+            style: GoogleFonts.poppins(
+              fontSize: 16,
+              color: Colors.white70,
+            ),
+          ),
+          const SizedBox(height: 30),
+          
+          _buildHelpOptions(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHelpOptions() {
+    return Column(
+      children: [
+        _buildHelpCard(
+          "Contact Support",
+          "Get in touch with our customer service team",
+          Icons.support_agent_rounded,
+          Colors.blueAccent,
+          () {}
+        ),
+        const SizedBox(height: 15),
+        _buildHelpCard(
+          "FAQs",
+          "Find answers to frequently asked questions",
+          Icons.help_center_rounded,
+          Colors.greenAccent,
+          () {}
+        ),
+        const SizedBox(height: 15),
+        _buildHelpCard(
+          "Documentation",
+          "Access policy documents and guides",
+          Icons.description_rounded,
+          Colors.orangeAccent,
+          () {}
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHelpCard(String title, String subtitle, IconData icon, Color color, VoidCallback onTap) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(15),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(15),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [color.withOpacity(0.2), color.withOpacity(0.05)],
+            ),
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: color.withOpacity(0.3)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 24),
+              ),
+              const SizedBox(width: 15),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      subtitle,
+                      style: GoogleFonts.poppins(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.arrow_forward_ios_rounded, color: color, size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ... (Keep all the existing methods below exactly as they were, including:)
+  // _buildFloatingHeader(), _buildBackButton(), _buildAdminButton(), _buildUserMenu()
+  // _buildWelcomeSection(), _buildInsuranceOverview(), _buildServicesGrid()
+  // _buildKnowledgeHub(), _buildRecentActivity(), _buildNoPoliciesState()
+  // _buildPolicyCard(), _buildPolicyActionButton(), _buildActivityItems()
+  // _buildNoActivityState(), _buildAdvancedBackground(), _buildQuantumParticles()
+  // _buildMinimalNavigationBar(), _buildNavItem(), and all helper methods
+
+  // Just make sure to remove the _buildUserPolicies() method since we're moving it to the Policies tab
 
   Widget _buildFloatingHeader() {
     return AnimatedPositioned(
@@ -204,10 +528,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   spreadRadius: 2,
                 ),
               ],
-              border: Border.all(
-                color: Colors.white.withOpacity(0.2),
-                width: 1,
-              ),
+              border: Border.all(color: Colors.white.withOpacity(0.2), width: 1),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -215,25 +536,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      "AutoSure",
-                      style: GoogleFonts.poppins(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        letterSpacing: 1.1,
-                      ),
-                    ),
-                    Text(
-                      "Premium Protection",
-                      style: GoogleFonts.poppins(
-                        fontSize: 12,
-                        color: Colors.white70,
-                      ),
-                    ),
+                    Text("AutoSure", style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 1.1)),
+                    Text(_getHeaderSubtitle(), style: GoogleFonts.poppins(fontSize: 12, color: Colors.white70)),
                   ],
                 ),
-                
                 Row(
                   children: [
                     if (_isAdmin) ...[
@@ -251,6 +557,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  String _getHeaderSubtitle() {
+    switch (_selectedIndex) {
+      case 0: return "Premium Protection";
+      case 1: return "Policy Management";
+      case 2: return "Activity History";
+      case 3: return "Help & Support";
+      default: return "Premium Protection";
+    }
+  }
+
   Widget _buildBackButton() {
     return ScaleTransition(
       scale: _scaleAnimation,
@@ -263,30 +579,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             onTap: () => Navigator.maybePop(context),
             borderRadius: BorderRadius.circular(15),
             child: Container(
-              width: 45,
-              height: 45,
+              width: 45, height: 45,
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.white.withOpacity(0.15),
-                    Colors.white.withOpacity(0.05),
-                  ],
-                ),
+                gradient: LinearGradient(colors: [Colors.white.withOpacity(0.15), Colors.white.withOpacity(0.05)]),
                 borderRadius: BorderRadius.circular(15),
                 border: Border.all(color: Colors.white.withOpacity(0.2)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.blueAccent.withOpacity(0.3),
-                    blurRadius: 10,
-                    spreadRadius: 2,
-                  ),
-                ],
+                boxShadow: [BoxShadow(color: Colors.blueAccent.withOpacity(0.3), blurRadius: 10, spreadRadius: 2)],
               ),
-              child: const Icon(
-                Icons.arrow_back_ios_new_rounded,
-                color: Colors.white,
-                size: 18,
-              ),
+              child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 18),
             ),
           ),
         ),
@@ -304,23 +604,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Colors.purpleAccent, Colors.purple],
-            ),
+            gradient: LinearGradient(colors: [Colors.purpleAccent, Colors.purple]),
             borderRadius: BorderRadius.circular(15),
           ),
           child: Row(
             children: [
               Icon(Icons.admin_panel_settings, color: Colors.white, size: 14),
               const SizedBox(width: 4),
-              Text(
-                "Admin",
-                style: GoogleFonts.poppins(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              Text("Admin", style: GoogleFonts.poppins(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
             ],
           ),
         ),
@@ -331,75 +622,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildUserMenu() {
     return PopupMenuButton<String>(
       icon: Container(
-        width: 40,
-        height: 40,
+        width: 40, height: 40,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: LinearGradient(
-            colors: [Colors.blueAccent, Colors.lightBlue],
-          ),
+          gradient: LinearGradient(colors: [Colors.blueAccent, Colors.lightBlue]),
         ),
         child: Icon(Icons.person, color: Colors.white, size: 18),
       ),
       itemBuilder: (context) => [
         PopupMenuItem(
           value: 'profile',
-          child: Row(
-            children: [
-              Icon(Icons.person, color: Colors.blueAccent, size: 18),
-              const SizedBox(width: 10),
-              Text('Profile Settings'),
-            ],
-          ),
+          child: Row(children: [
+            Icon(Icons.person, color: Colors.blueAccent, size: 18),
+            const SizedBox(width: 10),
+            Text('Profile Settings'),
+          ]),
         ),
         PopupMenuItem(
           value: 'logout',
-          child: Row(
-            children: [
-              Icon(Icons.logout, color: Colors.redAccent, size: 18),
-              const SizedBox(width: 10),
-              Text('Logout'),
-            ],
-          ),
+          child: Row(children: [
+            Icon(Icons.logout, color: Colors.redAccent, size: 18),
+            const SizedBox(width: 10),
+            Text('Logout'),
+          ]),
         ),
       ],
       onSelected: (value) {
         if (value == 'logout') _logout();
       },
       offset: const Offset(0, 50),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(15),
-      ),
-    );
-  }
-
-  Widget _buildMainContent() {
-    return Padding(
-      padding: const EdgeInsets.all(25.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Welcome Section
-          _buildWelcomeSection(),
-          const SizedBox(height: 30),
-          
-          // Insurance Overview (Non-Grid)
-          _buildInsuranceOverview(),
-          const SizedBox(height: 30),
-          
-          // Quick Services
-          _buildServicesGrid(),
-          const SizedBox(height: 30),
-          
-          // Knowledge Hub
-          _buildKnowledgeHub(),
-          const SizedBox(height: 30),
-          
-          // Recent Activity
-          _buildRecentActivity(),
-          const SizedBox(height: 80), // Extra space for bottom nav
-        ],
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
     );
   }
 
@@ -412,50 +664,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           width: double.infinity,
           padding: const EdgeInsets.all(25),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                Colors.white.withOpacity(0.15),
-                Colors.white.withOpacity(0.08),
-              ],
-            ),
+            gradient: LinearGradient(colors: [Colors.white.withOpacity(0.15), Colors.white.withOpacity(0.08)]),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: Colors.white.withOpacity(0.2)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                "Hi there!",
-                style: GoogleFonts.poppins(
-                  fontSize: 32,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
-              ),
+              Text("Hi there!", style: GoogleFonts.poppins(fontSize: 32, fontWeight: FontWeight.w700, color: Colors.white)),
               const SizedBox(height: 5),
-              Text(
-                "Are you ready to roll?",
-                style: GoogleFonts.poppins(
-                  fontSize: 18,
-                  color: Colors.white70,
-                ),
-              ),
+              Text("Are you ready to roll?", style: GoogleFonts.poppins(fontSize: 18, color: Colors.white70)),
               const SizedBox(height: 15),
-              Text(
-                "Welcome back, ${widget.username}",
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  color: Colors.white70,
-                ),
-              ),
+              Text("Welcome back, ${widget.username}", style: GoogleFonts.poppins(fontSize: 16, color: Colors.white70)),
               const SizedBox(height: 10),
-              Text(
-                "Your premium insurance dashboard is ready with advanced analytics and smart features.",
-                style: GoogleFonts.poppins(
-                  fontSize: 14,
-                  color: Colors.white60,
-                ),
-              ),
+              Text("Your premium insurance dashboard is ready with advanced analytics and smart features.", style: GoogleFonts.poppins(fontSize: 14, color: Colors.white60)),
             ],
           ),
         ),
@@ -467,28 +689,43 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Insurance Overview",
-          style: GoogleFonts.poppins(
-            fontSize: 22,
-            fontWeight: FontWeight.w600,
-            color: Colors.white,
-          ),
-        ),
+        Text("Insurance Overview", style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
         const SizedBox(height: 15),
         Column(
           children: [
-            _buildOverviewItem("Active Policy", "Comprehensive", Icons.shield, Colors.greenAccent, "98% Secure"),
+            _buildOverviewItem("Active Policy", _userStats['activePolicy']!, Icons.shield, Colors.greenAccent, _getPolicySubtitle(_userStats['activePolicy']!)),
             const SizedBox(height: 12),
-            _buildOverviewItem("Next Renewal", "23 Oct 2024", Icons.calendar_month, Colors.orangeAccent, "45 days left"),
+            _buildOverviewItem("Next Renewal", _userStats['nextRenewal']!, Icons.calendar_month, Colors.orangeAccent, _getRenewalSubtitle(_userStats['nextRenewal']!)),
             const SizedBox(height: 12),
-            _buildOverviewItem("Total Claims", "2 Submitted", Icons.description, Colors.blueAccent, "1 Approved"),
+            _buildOverviewItem("Total Claims", _userStats['totalClaims']!, Icons.description, Colors.blueAccent, "${_getApprovedClaimsCount()} Approved"),
             const SizedBox(height: 12),
-            _buildOverviewItem("Risk Score", "Low (7.2/10)", Icons.analytics, Colors.purpleAccent, "Excellent"),
+            _buildOverviewItem("Risk Score", _userStats['riskScore']!, Icons.analytics, Colors.purpleAccent, _getRiskSubtitle(_userStats['riskScore']!)),
           ],
         ),
       ],
     );
+  }
+
+  String _getPolicySubtitle(String policy) {
+    return policy == 'No Policy' ? 'Apply Now' : 'Active Coverage';
+  }
+
+  String _getRenewalSubtitle(String renewal) {
+    if (renewal == 'N/A') return 'No Active Policy';
+    if (renewal == 'Expired') return 'Renew Required';
+    return 'Days remaining';
+  }
+
+  String _getRiskSubtitle(String riskScore) {
+    if (riskScore == 'N/A') return 'No Claims Data';
+    final score = double.tryParse(riskScore.split('/')[0]) ?? 0;
+    if (score >= 8) return 'Excellent';
+    if (score >= 6) return 'Good';
+    return 'Needs Attention';
+  }
+
+  int _getApprovedClaimsCount() {
+    return _userClaims.where((claim) => claim['status'] == 'Approved').length;
   }
 
   Widget _buildOverviewItem(String title, String value, IconData icon, Color color, String subtitle) {
@@ -497,11 +734,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       builder: (context, child) {
         return Container(
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [color.withOpacity(0.2), color.withOpacity(0.05)],
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-            ),
+            gradient: LinearGradient(colors: [color.withOpacity(0.2), color.withOpacity(0.05)], begin: Alignment.centerLeft, end: Alignment.centerRight),
             borderRadius: BorderRadius.circular(15),
             border: Border.all(color: color.withOpacity(0.2)),
           ),
@@ -509,50 +742,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(icon, color: color, size: 22),
-                ),
+                Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: color.withOpacity(0.2), shape: BoxShape.circle), child: Icon(icon, color: color, size: 22)),
                 const SizedBox(width: 15),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        value,
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                      Text(
-                        title,
-                        style: GoogleFonts.poppins(
-                          fontSize: 14,
-                          color: Colors.white70,
-                        ),
-                      ),
+                      Text(value, style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
+                      Text(title, style: GoogleFonts.poppins(fontSize: 14, color: Colors.white70)),
                     ],
                   ),
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    subtitle,
-                    style: GoogleFonts.poppins(
-                      fontSize: 10,
-                      color: Colors.white70,
-                    ),
-                  ),
+                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+                  child: Text(subtitle, style: GoogleFonts.poppins(fontSize: 10, color: Colors.white70)),
                 ),
               ],
             ),
@@ -562,18 +766,162 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildNoPoliciesState() {
+    return Container(
+      padding: const EdgeInsets.all(30),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [Colors.white.withOpacity(0.1), Colors.white.withOpacity(0.05)]),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.policy, color: Colors.white54, size: 50),
+          const SizedBox(height: 15),
+          Text("No Active Policies", style: GoogleFonts.poppins(fontSize: 18, color: Colors.white, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 10),
+          Text("Get started by applying for insurance coverage", style: GoogleFonts.poppins(fontSize: 14, color: Colors.white70)),
+          const SizedBox(height: 20),
+          Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ApplyInsuranceScreen())),
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [Colors.greenAccent, Colors.green]),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text("Apply for Insurance", style: GoogleFonts.poppins(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPolicyCard(Map<String, dynamic> policy) {
+    final isActive = policy['status'] == 'Active';
+    final isExpired = _isPolicyExpired(policy);
+    final paymentPending = policy['paymentStatus'] == 'Pending';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 15),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [isActive ? Colors.greenAccent.withOpacity(0.2) : Colors.orangeAccent.withOpacity(0.2), Colors.white.withOpacity(0.05)]),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: isActive ? Colors.greenAccent.withOpacity(0.3) : Colors.orangeAccent.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text(policy['policyNumber'] ?? 'POL-${policy['id']}', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(color: _getPolicyStatusColor(policy['status']).withOpacity(0.2), borderRadius: BorderRadius.circular(20)),
+              child: Text(policy['status'] ?? 'Unknown', style: GoogleFonts.poppins(color: _getPolicyStatusColor(policy['status']), fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          Text("Vehicle: ${policy['vehicleModel']} (${policy['vehicleYear']})", style: GoogleFonts.poppins(color: Colors.white70)),
+          Text("Premium: \$${policy['premiumAmount']?.toStringAsFixed(2) ?? '0.00'}", style: GoogleFonts.poppins(color: Colors.white70)),
+          Text("Coverage: ${policy['policyType'] ?? 'Comprehensive'}", style: GoogleFonts.poppins(color: Colors.white70)),
+          const SizedBox(height: 15),
+          Row(children: [
+            if (paymentPending) ...[
+              _buildPolicyActionButton("Pay Now", Icons.payment, Colors.greenAccent, () => _makePayment(policy)),
+              const SizedBox(width: 10),
+            ],
+            if (isActive) ...[
+              _buildPolicyActionButton("View Details", Icons.visibility, Colors.blueAccent, () => _viewPolicyDetails(policy)),
+              const SizedBox(width: 10),
+              _buildPolicyActionButton("Cancel", Icons.cancel, Colors.redAccent, () => _cancelPolicy(policy)),
+            ],
+            if (isExpired) 
+              _buildPolicyActionButton("Renew", Icons.autorenew, Colors.greenAccent, () => _renewPolicy(policy)),
+          ]),
+        ],
+      ),
+    );
+  }
+
+  bool _isPolicyExpired(Map<String, dynamic> policy) {
+    final endDate = policy['endDate'];
+    if (endDate == null) return false;
+    return DateTime.fromMillisecondsSinceEpoch(endDate).isBefore(DateTime.now());
+  }
+
+  Widget _buildPolicyActionButton(String text, IconData icon, Color color, VoidCallback onTap) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: color.withOpacity(0.3)),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, color: color, size: 16),
+            const SizedBox(width: 6),
+            Text(text, style: GoogleFonts.poppins(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Color _getPolicyStatusColor(String? status) {
+    switch (status?.toLowerCase()) {
+      case 'active': return Colors.greenAccent;
+      case 'pending': return Colors.orangeAccent;
+      case 'cancelled': return Colors.redAccent;
+      case 'expired': return Colors.yellowAccent;
+      default: return Colors.grey;
+    }
+  }
+
+  // Policy management methods
+  void _makePayment(Map<String, dynamic> policy) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color.fromARGB(255, 16, 52, 90),
+        title: Text("Make Payment", style: GoogleFonts.poppins(color: Colors.white)),
+        content: Text("Payment feature for policy ${policy['policyNumber']} will be implemented here.", style: GoogleFonts.poppins(color: Colors.white70)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text("OK", style: GoogleFonts.poppins(color: Colors.blueAccent))),
+        ],
+      ),
+    );
+  }
+
+  void _viewPolicyDetails(Map<String, dynamic> policy) {
+    // Implement policy details view
+  }
+
+  void _cancelPolicy(Map<String, dynamic> policy) {
+    // Implement policy cancellation
+  }
+
+  void _renewPolicy(Map<String, dynamic> policy) {
+    // Implement policy renewal
+  }
+
   Widget _buildServicesGrid() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Quick Services",
-          style: GoogleFonts.poppins(
-            fontSize: 22,
-            fontWeight: FontWeight.w600,
-            color: Colors.white,
-          ),
-        ),
+        Text("Quick Services", style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
         const SizedBox(height: 15),
         GridView.count(
           shrinkWrap: true,
@@ -586,9 +934,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             _buildServiceGridItem("View Plans", Icons.auto_awesome, Colors.purpleAccent, () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PlansScreen()))),
             _buildServiceGridItem("Get Quote", Icons.request_quote, Colors.blueAccent, () => Navigator.push(context, MaterialPageRoute(builder: (context) => const GetQuoteScreen()))),
             _buildServiceGridItem("Apply Now", Icons.car_rental, Colors.greenAccent, () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ApplyInsuranceScreen()))),
-            _buildServiceGridItem("Claims", Icons.send, Colors.orangeAccent, () {}),
-            _buildServiceGridItem("Inspect", Icons.search, Colors.redAccent, () {}),
-            _buildServiceGridItem("Documents", Icons.folder, Colors.tealAccent, () {}),
+            _buildServiceGridItem("Submit Claim", Icons.description, Colors.orangeAccent, () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ClaimsScreen()))),
           ],
         ),
       ],
@@ -604,27 +950,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         borderRadius: BorderRadius.circular(15),
         child: Container(
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [color.withOpacity(0.3), color.withOpacity(0.1)],
-            ),
+            gradient: LinearGradient(colors: [color.withOpacity(0.3), color.withOpacity(0.1)]),
             borderRadius: BorderRadius.circular(15),
             border: Border.all(color: color.withOpacity(0.2)),
           ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: color, size: 28),
-              const SizedBox(height: 8),
-              Text(
-                title,
-                style: GoogleFonts.poppins(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(icon, color: color, size: 28),
+            const SizedBox(height: 8),
+            Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+          ]),
         ),
       ),
     );
@@ -634,14 +968,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Insurance Guide",
-          style: GoogleFonts.poppins(
-            fontSize: 22,
-            fontWeight: FontWeight.w600,
-            color: Colors.white,
-          ),
-        ),
+        Text("Insurance Guide", style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
         const SizedBox(height: 15),
         SizedBox(
           height: 130,
@@ -651,9 +978,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               _buildKnowledgeCard("Get Started Guide", "Step-by-step process to get insured", Icons.play_arrow, "5 min read"),
               _buildKnowledgeCard("Claim Process", "How to submit and track claims", Icons.description, "3 min read"),
               _buildKnowledgeCard("Policy Renewal", "Seamless renewal process explained", Icons.autorenew, "2 min read"),
-              _buildKnowledgeCard("Accident Guide", "What to do after an accident", Icons.emergency, "4 min read"),
               _buildKnowledgeCard("Payment Options", "Flexible payment methods available", Icons.payment, "2 min read"),
-              _buildKnowledgeCard("Safety Tips", "Preventive measures for drivers", Icons.security, "3 min read"),
             ],
           ),
         ),
@@ -661,56 +986,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildKnowledgeCard(String title, String subtitle, IconData icon, String duration) {
+Widget _buildKnowledgeCard(String title, String subtitle, IconData icon, String duration) {
     return Container(
       width: 220,
       margin: const EdgeInsets.only(right: 12),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.white.withOpacity(0.1), Colors.white.withOpacity(0.05)],
-        ),
+        gradient: LinearGradient(colors: [Colors.white.withOpacity(0.1), Colors.white.withOpacity(0.05)]),
         borderRadius: BorderRadius.circular(15),
         border: Border.all(color: Colors.white.withOpacity(0.1)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: Colors.blueAccent, size: 20),
-                const Spacer(),
-                Text(
-                  duration,
-                  style: GoogleFonts.poppins(
-                    color: Colors.white54,
-                    fontSize: 10,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              title,
-              style: GoogleFonts.poppins(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              subtitle,
-              style: GoogleFonts.poppins(
-                color: Colors.white70,
-                fontSize: 11,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(icon, color: Colors.blueAccent, size: 20),
+            const Spacer(),
+            Text(duration, style: GoogleFonts.poppins(color: Colors.white54, fontSize: 10)),
+          ]),
+          const SizedBox(height: 10),
+          Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 5),
+          Text(subtitle, style: GoogleFonts.poppins(color: Colors.white70, fontSize: 11), maxLines: 2, overflow: TextOverflow.ellipsis),
+        ]),
       ),
     );
   }
@@ -719,27 +1016,83 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Recent Activity",
-          style: GoogleFonts.poppins(
-            fontSize: 22,
-            fontWeight: FontWeight.w600,
-            color: Colors.white,
-          ),
-        ),
+        Text("Recent Activity", style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.white)),
         const SizedBox(height: 15),
-        ..._buildActivityItems(),
+        _userClaims.isEmpty && _userPolicies.isEmpty
+            ? _buildNoActivityState()
+            : Column(children: _buildActivityItems()),
       ],
     );
   }
 
+  Widget _buildNoActivityState() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: Column(children: [
+        Icon(Icons.history, color: Colors.white54, size: 40),
+        const SizedBox(height: 10),
+        Text("No Recent Activity", style: GoogleFonts.poppins(color: Colors.white70, fontSize: 16)),
+        Text("Your activity will appear here", style: GoogleFonts.poppins(color: Colors.white54, fontSize: 14)),
+      ]),
+    );
+  }
+
   List<Widget> _buildActivityItems() {
-    return [
-      _buildActivityItem("Policy Updated", "Your comprehensive policy was renewed", "2 hours ago", Icons.check_circle, Colors.green),
-      _buildActivityItem("Claim Submitted", "Accident claim #CLM045 is processing", "1 day ago", Icons.description, Colors.orange),
-      _buildActivityItem("Payment Received", "Monthly premium payment confirmed", "2 days ago", Icons.payment, Colors.blue),
-      _buildActivityItem("Document Uploaded", "Vehicle registration document added", "3 days ago", Icons.upload, Colors.purple),
-    ];
+    final items = <Widget>[];
+    
+    // Add recent policies
+    final recentPolicies = _userPolicies.take(2);
+    for (final policy in recentPolicies) {
+      items.add(_buildActivityItem(
+        "Policy ${policy['status'] == 'Active' ? 'Activated' : 'Created'}",
+        "Policy ${policy['policyNumber']} for ${policy['vehicleModel']}",
+        _formatTimestamp(policy['createdAt']),
+        policy['status'] == 'Active' ? Icons.check_circle : Icons.policy,
+        policy['status'] == 'Active' ? Colors.green : Colors.blue,
+      ));
+    }
+    
+    // Add recent claims
+    final recentClaims = _userClaims.take(2);
+    for (final claim in recentClaims) {
+      items.add(_buildActivityItem(
+        "Claim ${claim['status']}",
+        "Claim #${claim['id']?.toString().substring(0, 8)}",
+        _formatTimestamp(claim['submittedAt']),
+        Icons.description,
+        _getClaimStatusColor(claim['status']),
+      ));
+    }
+    
+    return items;
+  }
+
+  Color _getClaimStatusColor(String? status) {
+    switch (status?.toLowerCase()) {
+      case 'approved': return Colors.green;
+      case 'pending': return Colors.orange;
+      case 'rejected': return Colors.red;
+      default: return Colors.blue;
+    }
+  }
+
+  String _formatTimestamp(dynamic timestamp) {
+    if (timestamp == null) return 'Recently';
+    if (timestamp is int) {
+      final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+      final now = DateTime.now();
+      final difference = now.difference(date);
+      
+      if (difference.inDays > 0) return '${difference.inDays} days ago';
+      if (difference.inHours > 0) return '${difference.inHours} hours ago';
+      if (difference.inMinutes > 0) return '${difference.inMinutes} minutes ago';
+      return 'Just now';
+    }
+    return timestamp.toString();
   }
 
   Widget _buildActivityItem(String title, String subtitle, String time, IconData icon, Color color) {
@@ -750,29 +1103,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         color: Colors.white.withOpacity(0.05),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: color, size: 18),
-          ),
-          const SizedBox(width: 15),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 14)),
-                Text(subtitle, style: GoogleFonts.poppins(color: Colors.white70, fontSize: 12)),
-              ],
-            ),
-          ),
-          Text(time, style: GoogleFonts.poppins(color: Colors.white54, fontSize: 11)),
-        ],
-      ),
+      child: Row(children: [
+        Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: color.withOpacity(0.2), shape: BoxShape.circle), child: Icon(icon, color: color, size: 18)),
+        const SizedBox(width: 15),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 14)),
+          Text(subtitle, style: GoogleFonts.poppins(color: Colors.white70, fontSize: 12)),
+        ])),
+        Text(time, style: GoogleFonts.poppins(color: Colors.white54, fontSize: 11)),
+      ]),
     );
   }
 
@@ -808,11 +1147,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               Positioned(
                 left: (i * 120) % MediaQuery.of(context).size.width,
                 top: (i * 100) % MediaQuery.of(context).size.height,
-                child: _QuantumParticle(
-                  size: 2 + (i % 3).toDouble(),
-                  delay: i * 0.5,
-                  controller: _particleController,
-                ),
+                child: _QuantumParticle(size: 2 + (i % 3).toDouble(), delay: i * 0.5, controller: _particleController),
               ),
           ],
         );
@@ -823,23 +1158,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildMinimalNavigationBar() {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
-      margin: EdgeInsets.only(
-        bottom: 10,
-        left: 20,
-        right: 20,
-      ),
+      margin: const EdgeInsets.only(bottom: 10, left: 20, right: 20),
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 20),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.08),
         borderRadius: BorderRadius.circular(25),
         border: Border.all(color: Colors.white.withOpacity(0.15)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            blurRadius: 15,
-            spreadRadius: 1,
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 15, spreadRadius: 1)],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -863,30 +1188,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         borderRadius: BorderRadius.circular(15),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                color: isSelected ? Colors.blueAccent : Colors.white70,
-                size: 22,
-              ),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                style: GoogleFonts.poppins(
-                  color: isSelected ? Colors.blueAccent : Colors.white70,
-                  fontSize: 10,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                ),
-              ),
-            ],
-          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, color: isSelected ? Colors.blueAccent : Colors.white70, size: 22),
+            const SizedBox(height: 2),
+            Text(label, style: GoogleFonts.poppins(color: isSelected ? Colors.blueAccent : Colors.white70, fontSize: 10, fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal)),
+          ]),
         ),
       ),
     );
   }
-
 }
 
 class _QuantumParticle extends StatelessWidget {
@@ -894,11 +1204,7 @@ class _QuantumParticle extends StatelessWidget {
   final double delay;
   final AnimationController controller;
 
-  const _QuantumParticle({
-    required this.size,
-    required this.delay,
-    required this.controller,
-  });
+  const _QuantumParticle({required this.size, required this.delay, required this.controller});
 
   @override
   Widget build(BuildContext context) {
@@ -909,21 +1215,12 @@ class _QuantumParticle extends StatelessWidget {
         return Opacity(
           opacity: 0.2 + animationValue * 0.3,
           child: Transform.translate(
-            offset: Offset(
-              (animationValue * 2 - 1) * 40,
-              (animationValue * 3 - 1.5) * 25,
-            ),
+            offset: Offset((animationValue * 2 - 1) * 40, (animationValue * 3 - 1.5) * 25),
             child: Container(
-              width: size,
-              height: size,
+              width: size, height: size,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [
-                    Colors.blueAccent.withOpacity(0.6),
-                    Colors.lightBlue.withOpacity(0.2),
-                  ],
-                ),
+                gradient: RadialGradient(colors: [Colors.blueAccent.withOpacity(0.6), Colors.lightBlue.withOpacity(0.2)]),
               ),
             ),
           ),
@@ -932,4 +1229,3 @@ class _QuantumParticle extends StatelessWidget {
     );
   }
 }
-
