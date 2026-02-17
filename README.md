@@ -28,6 +28,7 @@ By digitizing the insurance experience, AutoSure empowers users to make informed
 
 
 
+
 2\.💰 Instant Insurance Quotes
 
 &nbsp; - Generate real-time insurance quotes by inputting:
@@ -42,6 +43,7 @@ By digitizing the insurance experience, AutoSure empowers users to make informed
 
 
 
+
 3\. 📝 Digital Insurance Application
 
 &nbsp; - Apply for car insurance entirely in-app
@@ -51,6 +53,7 @@ By digitizing the insurance experience, AutoSure empowers users to make informed
 &nbsp; - Choose plans and coverage levels
 
 &nbsp; - Fully paperless onboarding process
+
 
 
 
@@ -72,6 +75,7 @@ By digitizing the insurance experience, AutoSure empowers users to make informed
 
 
 
+
 5\.  🚨 Claims Submission \& Tracking
 
 &nbsp; - Report accidents or vehicle damages directly through the app
@@ -79,6 +83,7 @@ By digitizing the insurance experience, AutoSure empowers users to make informed
 &nbsp; - Submit incident details with photos or documents
 
 &nbsp; - Track claim progress from submission to resolution
+
 
 
 
@@ -92,6 +97,7 @@ By digitizing the insurance experience, AutoSure empowers users to make informed
 
 
 
+
 7\.  🎨 Modern Responsive UI
 
 &nbsp; - Designed with Flutter for smooth cross-platform performance
@@ -101,6 +107,7 @@ By digitizing the insurance experience, AutoSure empowers users to make informed
 &nbsp; - Fully responsive layouts supporting multiple device screen sizes
 
 &nbsp; - Focused on usability and accessibility
+
 
 
 
@@ -119,6 +126,7 @@ By digitizing the insurance experience, AutoSure empowers users to make informed
 &nbsp; - Authentication: Firebase Auth
 
 &nbsp; - Database: Firebase Realtime Database
+
 
 
 
