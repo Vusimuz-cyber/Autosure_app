@@ -120,8 +120,6 @@ By digitizing the insurance experience, AutoSure empowers users to make informed
 
 &nbsp; - Database: Firebase Realtime Database
 
-&nbsp; - \*\*State Management 
-
 
 
 ---
