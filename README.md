@@ -24,7 +24,7 @@ By digitizing the insurance experience, AutoSure empowers users to make informed
 
 &nbsp; - Persistent login sessions and secure data storage
 
-&nbsp; - Role-based access for customers, staff, and admins
+&nbsp; - Role-based access for customers and admins
 
 
 
