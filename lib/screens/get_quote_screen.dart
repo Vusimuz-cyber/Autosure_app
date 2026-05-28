@@ -134,12 +134,10 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
     );
   }
 
-  // Save quote locally and show confirmation
+  // Saves quote locally and show confirmation
   void _saveQuoteLocally(Map<String, dynamic> monthlyPremiums) {
     final quoteData = _prepareQuoteData(monthlyPremiums);
-    
-    // In a real app, you might save to local storage or database
-    // For now, we'll just show a confirmation and keep in memory
+
     
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -261,7 +259,7 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
       }
 
       final response = await http.post(
-        Uri.parse('http://localhost:8000/get_quote'),
+        Uri.parse('https://autosure-api.onrender.com/get_quote'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           // BASE CALCULATION INPUT
