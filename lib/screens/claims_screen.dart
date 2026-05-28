@@ -3,7 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:io';
+import 'package:camera/camera.dart';
 
 class ClaimsScreen extends StatefulWidget {
   const ClaimsScreen({super.key});
@@ -24,6 +26,7 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
   final DatabaseReference _claimsRef = FirebaseDatabase.instance.ref('claims');
   final DatabaseReference _policiesRef = FirebaseDatabase.instance.ref('policies');
   final DatabaseReference _usersRef = FirebaseDatabase.instance.ref('users');
+  final FirebaseStorage _storage = FirebaseStorage.instance;
 
   // Form controllers
   final TextEditingController _incidentDateController = TextEditingController();
@@ -58,6 +61,7 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
   // Image handling
   final ImagePicker _imagePicker = ImagePicker();
   List<XFile> _selectedImages = [];
+  List<String> _uploadedImageUrls = [];
 
   // User policies
   List<Map<String, dynamic>> _userPolicies = [];
@@ -381,10 +385,14 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
           _buildClaimTypeSelection(),
           const SizedBox(height: 20),
           _buildIncidentDetails(),
-          const SizedBox(height: 20),
-          _buildDamageDetails(),
-          const SizedBox(height: 20),
-          _buildEvidenceUpload(),
+          if (_selectedClaimType != 'Theft') ...[
+            const SizedBox(height: 20),
+            _buildDamageDetails(),
+          ],
+          if (_selectedClaimType != 'Theft') ...[
+            const SizedBox(height: 20),
+            _buildEvidenceUpload(),
+          ],
           const SizedBox(height: 20),
           _buildAdditionalInfo(),
           const SizedBox(height: 30),
@@ -811,8 +819,8 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
             controller: _estimatedCostController,
             focusNode: _costFocusNode,
             isFocused: _isCostFocused,
-            hintText: "Estimated Repair Cost (\$)",
-            prefixIcon: Icons.attach_money_rounded,
+            hintText: "Estimated Repair Cost (R)",
+            prefixIcon: Icons.monetization_on_rounded,
             keyboardType: TextInputType.number,
           ),
         ],
@@ -926,20 +934,54 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
               _buildUploadButton("Gallery", Icons.photo_library_rounded, Colors.purpleAccent, _pickImages),
             ],
           ),
+          if (_selectedImages.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              "${_selectedImages.length}/5 images selected",
+              style: GoogleFonts.poppins(
+                color: Colors.white60,
+                fontSize: 12,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
   Widget _buildImageGrid() {
+    if (_selectedImages.isEmpty) {
+      return Container(
+        height: 100,
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withOpacity(0.2)),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.photo_library_rounded, color: Colors.white54, size: 30),
+              const SizedBox(height: 5),
+              Text(
+                "No photos selected",
+                style: GoogleFonts.poppins(
+                  color: Colors.white54,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Container(
       height: 120,
       child: ListView(
         scrollDirection: Axis.horizontal,
-        children: [
-          ..._selectedImages.map((image) => _buildImagePreview(image)),
-          if (_selectedImages.length < 5) _buildAddImageButton(),
-        ],
+        children: _selectedImages.map((image) => _buildImagePreview(image)).toList(),
       ),
     );
   }
@@ -989,40 +1031,6 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildAddImageButton() {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: _pickImages,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          width: 100,
-          height: 100,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white.withOpacity(0.3)),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.add_photo_alternate_rounded, color: Colors.white70, size: 30),
-              const SizedBox(height: 5),
-              Text(
-                "Add Photo",
-                style: GoogleFonts.poppins(
-                  color: Colors.white70,
-                  fontSize: 10,
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -1267,6 +1275,7 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
         setState(() {
           _selectedImages.addAll(images.take(5 - _selectedImages.length));
         });
+        _showSuccessMessage("${images.length} images selected");
       }
     } catch (e) {
       _showErrorDialog("Failed to pick images: $e");
@@ -1291,9 +1300,11 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
         setState(() {
           _selectedImages.add(image);
         });
+        _showSuccessMessage("Photo captured successfully!");
       }
     } catch (e) {
-      _showErrorDialog("Failed to take photo: $e");
+      print("Camera error: $e");
+      _showErrorDialog("Camera not available. Please check app permissions or use gallery instead.");
     }
   }
 
@@ -1305,6 +1316,56 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
     setState(() {
       _selectedImages.remove(image);
     });
+    _showSuccessMessage("Image removed");
+  }
+
+  void _showSuccessMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.greenAccent.withOpacity(0.9),
+        content: Text(
+          message,
+          style: GoogleFonts.poppins(
+            color: Colors.white,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  // Upload images to Firebase Storage
+  Future<List<String>> _uploadImages() async {
+    List<String> imageUrls = [];
+    final user = FirebaseAuth.instance.currentUser;
+    
+    if (user == null || _selectedImages.isEmpty) return imageUrls;
+
+    for (int i = 0; i < _selectedImages.length; i++) {
+      try {
+        final XFile image = _selectedImages[i];
+        final File imageFile = File(image.path);
+        
+        // Create unique filename
+        String fileName = 'claim_${user.uid}_${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
+        Reference storageRef = _storage.ref().child('claim_images/$fileName');
+        
+        // Upload to Firebase Storage
+        await storageRef.putFile(imageFile);
+        
+        // Get download URL
+        String downloadUrl = await storageRef.getDownloadURL();
+        imageUrls.add(downloadUrl);
+        
+        print('Successfully uploaded image $i: $downloadUrl');
+      } catch (e) {
+        print('Error uploading image $i: $e');
+        throw Exception('Failed to upload image $i: $e');
+      }
+    }
+    
+    return imageUrls;
   }
 
   // Claim submission
@@ -1320,7 +1381,12 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
       final selectedPolicy = _userPolicies.firstWhere((policy) => policy['id'] == _selectedPolicy);
       
       final claimId = _claimsRef.push().key!;
-      final now = DateTime.now();
+      
+      // Upload images first
+      List<String> imageUrls = [];
+      if (_selectedClaimType != 'Theft' && _selectedImages.isNotEmpty) {
+        imageUrls = await _uploadImages();
+      }
 
       final claimData = {
         'claimId': claimId,
@@ -1332,16 +1398,18 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
         'incidentTime': _incidentTimeController.text,
         'location': _locationController.text.trim(),
         'description': _descriptionController.text.trim(),
-        'damageDescription': _damageDescriptionController.text.trim(),
-        'severity': _selectedSeverity,
-        'estimatedCost': double.tryParse(_estimatedCostController.text) ?? 0.0,
+        'damageDescription': _selectedClaimType != 'Theft' ? _damageDescriptionController.text.trim() : 'Vehicle stolen - no damage assessment possible',
+        'severity': _selectedClaimType != 'Theft' ? _selectedSeverity : 'Total',
+        'estimatedCost': _selectedClaimType != 'Theft' ? (double.tryParse(_estimatedCostController.text) ?? 0.0) : 0.0,
         'otherPartyInvolved': _otherPartyInvolved,
         'policeReportFiled': _policeReportFiled,
         'status': 'Pending',
         'submittedAt': ServerValue.timestamp,
-        'imagesCount': _selectedImages.length,
+        'images': imageUrls,
+        'imagesCount': imageUrls.length,
         'vehicleModel': selectedPolicy['vehicleModel'],
         'vehicleYear': selectedPolicy['vehicleYear'],
+        'userEmail': user.email,
       };
 
       await _claimsRef.child(claimId).set(claimData);
@@ -1351,7 +1419,7 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
 
     } catch (e) {
       print('Error submitting claim: $e');
-      _showErrorDialog('Failed to submit claim. Please try again.');
+      _showErrorDialog('Failed to submit claim. Please try again. Error: ${e.toString()}');
     } finally {
       if (mounted) {
         setState(() => _isSubmitting = false);
@@ -1402,6 +1470,17 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
               ),
               textAlign: TextAlign.center,
             ),
+            if (_selectedClaimType == 'Theft') ...[
+              const SizedBox(height: 10),
+              Text(
+                "For theft claims, please ensure you have filed a police report.",
+                style: GoogleFonts.poppins(
+                  color: Colors.orangeAccent,
+                  fontSize: 11,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
           ],
         ),
         actions: [

@@ -5,256 +5,137 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'home_screen.dart';
+import 'advanced_vehicle_capture.dart';
 
 class ApplyInsuranceScreen extends StatefulWidget {
-  const ApplyInsuranceScreen({super.key});
+  final Map<String, dynamic>? initialQuoteData;
+  final Map<String, dynamic>? quoteData; // Add this line
+
+  const ApplyInsuranceScreen({
+    super.key,
+    this.initialQuoteData,
+    this.quoteData, // Add this line
+  });
 
   @override
   State<ApplyInsuranceScreen> createState() => _ApplyInsuranceScreenState();
 }
 
-class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> with TickerProviderStateMixin {
-  late AnimationController _masterController;
-  late AnimationController _glowController;
-  late AnimationController _particleController;
-  late Animation<double> _fadeAnimation;
-  late Animation<double> _scaleAnimation;
-  late Animation<Offset> _slideAnimation;
-
+class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
   // Form controllers
   final TextEditingController _idController = TextEditingController();
   final TextEditingController _contactController = TextEditingController();
   final TextEditingController _addressController = TextEditingController();
-  
-  // Focus nodes
-  final _idFocusNode = FocusNode();
-  final _contactFocusNode = FocusNode();
-  final _addressFocusNode = FocusNode();
-  bool _isIdFocused = false;
-  bool _isContactFocused = false;
-  bool _isAddressFocused = false;
+  final TextEditingController _coverDurationController = TextEditingController();
 
   // Form state
   bool _infoConfirmed = false;
   bool _termsAgreed = false;
-  double _scrollOffset = 0.0;
-  bool _showFloatingHeader = true;
   bool _isSubmitting = false;
+  bool _showQuoteDetails = true;
 
-  // File upload state - simplified for web compatibility
-  Map<String, Map<String, dynamic>> _uploadedFiles = {
-    'id_document': {'name': '', 'uploaded': false, 'url': ''},
-    'proof_of_address': {'name': '', 'uploaded': false, 'url': ''},
-    'vehicle_photos': {'name': '', 'uploaded': false, 'url': ''},
-    'vehicle_registration': {'name': '', 'uploaded': false, 'url': ''},
+  // File upload state
+  Map<String, bool> _uploadedFiles = {
+    'id_document': false,
+    'proof_of_address': false,
+    'vehicle_photos': false,
+    'vehicle_registration': false,
   };
 
-  Map<String, double> _uploadProgress = {};
+  Map<String, String> _fileNames = {
+    'id_document': '',
+    'proof_of_address': '',
+    'vehicle_photos': '',
+    'vehicle_registration': '',
+  };
 
-  final ScrollController _scrollController = ScrollController();
+  Map<String, bool> _uploadingFiles = {
+    'id_document': false,
+    'proof_of_address': false,
+    'vehicle_photos': false,
+    'vehicle_registration': false,
+  };
+
   final DatabaseReference _applicationsRef = FirebaseDatabase.instance.ref('insurance_applications');
   final FirebaseStorage _storage = FirebaseStorage.instance;
+
+  // Cover duration options
+  final List<String> _coverDurations = ['12 Months', '6 Months', '3 Months', '1 Month'];
 
   @override
   void initState() {
     super.initState();
-    _initializeControllers();
-    _setupScrollListener();
+    _initializeFormWithPreviousData();
   }
 
-  void _initializeControllers() {
-    _masterController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1500),
-    );
-    
-    _glowController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 3),
-    )..repeat(reverse: true);
-    
-    _particleController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
-    
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _masterController, curve: Curves.easeInOutQuart),
-    );
-    
-    _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _masterController, curve: Curves.elasticOut),
-    );
-    
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0.0, 0.3),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _masterController,
-      curve: Curves.easeOutBack,
-    ));
-
-    _masterController.forward();
-
-    // Focus node listeners
-    _idFocusNode.addListener(() {
-      if (mounted) {
-        setState(() {
-          _isIdFocused = _idFocusNode.hasFocus;
-        });
-      }
-    });
-    
-    _contactFocusNode.addListener(() {
-      if (mounted) {
-        setState(() {
-          _isContactFocused = _contactFocusNode.hasFocus;
-        });
-      }
-    });
-    
-    _addressFocusNode.addListener(() {
-      if (mounted) {
-        setState(() {
-          _isAddressFocused = _addressFocusNode.hasFocus;
-        });
-      }
-    });
+  void _initializeFormWithPreviousData() {
+    if (widget.initialQuoteData != null) {
+      final quoteData = widget.initialQuoteData!;
+      
+    }
   }
 
-  void _setupScrollListener() {
-    _scrollController.addListener(() {
-      setState(() {
-        _scrollOffset = _scrollController.offset;
-        _showFloatingHeader = _scrollOffset < 100;
-      });
-    });
-  }
-
-  // Web-compatible file upload methods
   Future<void> _uploadFile(String documentType) async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx'],
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
         allowMultiple: false,
       );
 
       if (result != null && result.files.isNotEmpty) {
         PlatformFile file = result.files.first;
         
-        // Check file size (max 10MB)
-        if (file.size > 10 * 1024 * 1024) {
-          _showErrorSnackbar('File size must be less than 10MB');
-          return;
-        }
-
-        // Check if we have bytes (web-compatible)
-        if (file.bytes == null) {
-          _showErrorSnackbar('Could not read file. Please try again.');
+        if (file.size > 5 * 1024 * 1024) {
+          _showErrorSnackbar('File too large. Use smaller files (<5MB)');
           return;
         }
 
         setState(() {
-          _uploadedFiles[documentType] = {
-            'name': file.name,
-            'uploaded': false,
-            'url': ''
-          };
+          _uploadingFiles[documentType] = true;
         });
 
-        // Start upload to Firebase Storage
-        await _startFileUpload(documentType, file);
+        // Simulated upload for now
+        await _fastSimulatedUpload(documentType, file.name);
       }
     } catch (e) {
-      _showErrorSnackbar('Failed to pick file: $e');
-    }
-  }
-
-  Future<void> _startFileUpload(String documentType, PlatformFile file) async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        _showErrorSnackbar('Please log in to upload files');
-        return;
-      }
-
-      String fileName = '${user.uid}_${documentType}_${DateTime.now().millisecondsSinceEpoch}.${_getFileExtension(file.name)}';
-      Reference storageRef = _storage.ref().child('insurance_applications/$fileName');
-      
-      // Use bytes directly for web compatibility
-      final UploadTask uploadTask = storageRef.putData(
-        file.bytes!,
-        SettableMetadata(contentType: _getMimeType(file.name)),
-      );
-
+      _showErrorSnackbar('Upload failed');
       setState(() {
-        _uploadProgress[documentType] = 0.0;
-      });
-
-      // Listen to upload progress
-      uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
-        setState(() {
-          _uploadProgress[documentType] = snapshot.bytesTransferred / snapshot.totalBytes;
-        });
-      });
-
-      // Wait for upload to complete
-      TaskSnapshot snapshot = await uploadTask;
-      
-      // Get download URL
-      String downloadURL = await snapshot.ref.getDownloadURL();
-      
-      // Update file state
-      setState(() {
-        _uploadedFiles[documentType] = {
-          'name': file.name,
-          'uploaded': true,
-          'url': downloadURL
-        };
-        _uploadProgress[documentType] = 1.0;
-      });
-
-      // Store file info in Realtime Database
-      await _applicationsRef.child(user.uid).child('documents').child(documentType).set({
-        'fileName': file.name,
-        'fileUrl': downloadURL,
-        'uploadedAt': DateTime.now().millisecondsSinceEpoch,
-        'fileSize': file.size,
-      });
-
-      _showSuccessSnackbar('${_getDocumentDisplayName(documentType)} uploaded successfully!');
-
-    } catch (e) {
-      _showErrorSnackbar('Upload failed: $e');
-      setState(() {
-        _uploadedFiles[documentType] = {'name': '', 'uploaded': false, 'url': ''};
-        _uploadProgress[documentType] = 0.0;
+        _uploadingFiles[documentType] = false;
       });
     }
   }
 
-  String _getFileExtension(String fileName) {
-    return fileName.split('.').last.toLowerCase();
+  Future<void> _fastSimulatedUpload(String documentType, String fileName) async {
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    setState(() {
+      _uploadedFiles[documentType] = true;
+      _fileNames[documentType] = fileName;
+      _uploadingFiles[documentType] = false;
+    });
+    
+    _showSuccessSnackbar('${_getDocumentDisplayName(documentType)} uploaded!');
   }
 
-  String _getMimeType(String fileName) {
-    final extension = _getFileExtension(fileName);
-    switch (extension) {
-      case 'jpg':
-      case 'jpeg':
-        return 'image/jpeg';
-      case 'png':
-        return 'image/png';
-      case 'pdf':
-        return 'application/pdf';
-      case 'doc':
-        return 'application/msword';
-      case 'docx':
-        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      default:
-        return 'application/octet-stream';
-    }
+  void _launchAdvancedCapture() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AdvancedVehicleCaptureScreen(
+          onPhotosCaptured: (Map<String, String> photos) {
+            if (photos.isNotEmpty) {
+              setState(() {
+                _uploadedFiles['vehicle_photos'] = true;
+                _fileNames['vehicle_photos'] = '12 Vehicle Photos (3D Scanned)';
+                _uploadingFiles['vehicle_photos'] = false;
+              });
+              _showSuccessSnackbar('Vehicle 3D scan completed successfully!');
+            }
+          },
+        ),
+      ),
+    );
   }
 
   String _getDocumentDisplayName(String documentType) {
@@ -269,8 +150,8 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> with Ticker
 
   void _removeFile(String documentType) {
     setState(() {
-      _uploadedFiles[documentType] = {'name': '', 'uploaded': false, 'url': ''};
-      _uploadProgress[documentType] = 0.0;
+      _uploadedFiles[documentType] = false;
+      _fileNames[documentType] = '';
     });
     _showSuccessSnackbar('${_getDocumentDisplayName(documentType)} removed');
   }
@@ -295,124 +176,715 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> with Ticker
     );
   }
 
-  bool _areRequiredDocumentsUploaded() {
-    return _uploadedFiles['id_document']!['uploaded'] && 
-           _uploadedFiles['proof_of_address']!['uploaded'] && 
-           _uploadedFiles['vehicle_photos']!['uploaded'];
-  }
-
   bool _isFormValid() {
+    // Only require text fields to be filled, documents are optional for submission
     return _idController.text.isNotEmpty &&
            _contactController.text.isNotEmpty &&
            _addressController.text.isNotEmpty &&
-           _infoConfirmed &&
-           _termsAgreed &&
-           _areRequiredDocumentsUploaded();
+           _coverDurationController.text.isNotEmpty &&
+           _infoConfirmed && 
+           _termsAgreed;
   }
 
-  @override
-  void dispose() {
-    _masterController.dispose();
-    _glowController.dispose();
-    _particleController.dispose();
-    _scrollController.dispose();
-    _idController.dispose();
-    _contactController.dispose();
-    _addressController.dispose();
-    _idFocusNode.dispose();
-    _contactFocusNode.dispose();
-    _addressFocusNode.dispose();
-    super.dispose();
+  void _removeQuote() {
+    setState(() {
+      _showQuoteDetails = false;
+    });
+    _showSuccessSnackbar('Quote details removed');
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color.fromARGB(255, 8, 18, 32),
-      body: Stack(
+      body: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    _buildWelcomeSection(),
+                    const SizedBox(height: 30),
+                    _buildQuoteCard(),
+                    const SizedBox(height: 30),
+                    _buildPersonalVerification(),
+                    const SizedBox(height: 30),
+                    _buildDocumentUploads(),
+                    const SizedBox(height: 30),
+                    _buildDeclaration(),
+                    const SizedBox(height: 40),
+                    _buildSubmitButton(),
+                    const SizedBox(height: 40),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      child: Row(
         children: [
-          _buildAdvancedBackground(),
-          _buildQuantumParticles(),
-          CustomScrollView(
-            controller: _scrollController,
-            physics: const BouncingScrollPhysics(),
-            slivers: [
-              const SliverAppBar(
-                expandedHeight: 120,
-                floating: false,
-                pinned: false,
-                snap: false,
-                elevation: 0,
-                backgroundColor: Colors.transparent,
-                automaticallyImplyLeading: false,
-              ),
-              SliverToBoxAdapter(
-                child: _buildMainContent(),
-              ),
-            ],
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
           ),
-          _buildFloatingHeader(),
-          Positioned(
-            top: 140,
-            left: 25,
-            child: _buildBackButton(),
+          const SizedBox(width: 10),
+          Text(
+            "Apply for Insurance",
+            style: GoogleFonts.poppins(
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
           ),
-          if (_isSubmitting) _buildLoadingOverlay(),
         ],
       ),
     );
   }
 
-  Widget _buildFloatingHeader() {
-    return AnimatedPositioned(
-      duration: const Duration(milliseconds: 300),
-      top: _showFloatingHeader ? 40 : -100,
-      left: 0,
-      right: 0,
-      child: ScaleTransition(
-        scale: _scaleAnimation,
-        child: FadeTransition(
-          opacity: _fadeAnimation,
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 20),
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  const Color.fromARGB(255, 16, 52, 90).withOpacity(0.95),
-                  const Color.fromARGB(255, 8, 26, 45).withOpacity(0.9),
+  Widget _buildWelcomeSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.blueAccent.withOpacity(0.2),
+            Colors.purpleAccent.withOpacity(0.1),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.greenAccent.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.rocket_launch, color: Colors.greenAccent, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  "Finalize Your Application",
+                  style: GoogleFonts.poppins(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Complete your application in minutes - Documents can be uploaded later",
+            style: GoogleFonts.poppins(
+              fontSize: 14,
+              color: Colors.greenAccent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuoteCard() {
+    // Use either quoteData or initialQuoteData
+    final quoteData = widget.quoteData ?? widget.initialQuoteData;
+    if (quoteData == null || !_showQuoteDetails) return const SizedBox();
+
+    final premiums = quoteData['premiums'] ?? {};
+    
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.blueAccent.withOpacity(0.15),
+            Colors.purpleAccent.withOpacity(0.1),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with remove button
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.blueAccent.withOpacity(0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.price_check, color: Colors.blueAccent, size: 18),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    "Your Insurance Quote",
+                    style: GoogleFonts.poppins(
+                      color: Colors.blueAccent,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ],
               ),
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.4),
-                  blurRadius: 20,
-                  spreadRadius: 2,
+              Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+                child: InkWell(
+                  onTap: _removeQuote,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                    ),
+                    child: Icon(Icons.close, color: Colors.redAccent, size: 16),
+                  ),
                 ),
-              ],
-              border: Border.all(
-                color: Colors.white.withOpacity(0.2),
-                width: 1,
               ),
+            ],
+          ),
+          
+          const SizedBox(height: 15),
+          
+          // Vehicle Info in a modern layout
+          Container(
+            padding: const EdgeInsets.all(15),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.3),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
+                // Vehicle Icon
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blueAccent.withOpacity(0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.directions_car, color: Colors.blueAccent, size: 24),
+                ),
+                const SizedBox(width: 12),
+                // Vehicle Details
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "${quoteData['brand']} ${quoteData['model']}",
+                        style: GoogleFonts.poppins(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        "${quoteData['year']} • ${quoteData['color']} • ${quoteData['regNumber'] ?? 'N/A'}",
+                        style: GoogleFonts.poppins(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                      Text(
+                        "Value: R${quoteData['value']}",
+                        style: GoogleFonts.poppins(
+                          color: Colors.greenAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 12),
+          
+          // Premium Cards
+          if (premiums.isNotEmpty) ...[
+            Text(
+              "Premium Options",
+              style: GoogleFonts.poppins(
+                color: Colors.white70,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                if (premiums['comprehensive'] != null)
+                  _buildPremiumChip("Comprehensive", "R${premiums['comprehensive']?.toStringAsFixed(0)}", Colors.blueAccent),
+                if (premiums['smart'] != null)
+                  _buildPremiumChip("Smart Plan", "R${premiums['smart']?.toStringAsFixed(0)}", Colors.greenAccent),
+                if (premiums['third_party'] != null)
+                  _buildPremiumChip("Third Party", "R${premiums['third_party']?.toStringAsFixed(0)}", Colors.orangeAccent),
+              ],
+            ),
+          ],
+          
+          const SizedBox(height: 12),
+          
+          // Location and Coverage
+          Row(
+            children: [
+              Expanded(
+                child: _buildDetailItem(Icons.location_on, "Location", "${quoteData['province']}, ${quoteData['place']}"),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _buildDetailItem(Icons.security, "Coverage", quoteData['coverageType'] ?? 'Comprehensive'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPremiumChip(String title, String price, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.poppins(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            price,
+            style: GoogleFonts.poppins(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailItem(IconData icon, String label, String value) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.blueAccent, size: 14),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: GoogleFonts.poppins(
+                    color: Colors.white70,
+                    fontSize: 10,
+                  ),
+                ),
+                Text(
+                  value,
+                  style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPersonalVerification() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.greenAccent.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.person, color: Colors.greenAccent, size: 18),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              "Personal Information",
+              style: GoogleFonts.poppins(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 15),
+        _buildAdvancedTextField(_idController, "ID Number", Icons.badge, "Enter your ID or passport number"),
+        const SizedBox(height: 12),
+        _buildAdvancedTextField(_contactController, "Contact Number", Icons.phone, "Your mobile number"),
+        const SizedBox(height: 12),
+        _buildAdvancedTextField(_addressController, "Residential Address", Icons.home, "Your full residential address"),
+        const SizedBox(height: 12),
+        _buildCoverDurationDropdown(),
+      ],
+    );
+  }
+
+  Widget _buildAdvancedTextField(TextEditingController controller, String label, IconData icon, String hint) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.poppins(
+            color: Colors.white70,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          height: 55,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withOpacity(0.1),
+                Colors.white.withOpacity(0.05),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withOpacity(0.2)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 50,
+                alignment: Alignment.center,
+                child: Icon(icon, color: Colors.white54, size: 20),
+              ),
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  style: GoogleFonts.poppins(color: Colors.white, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: hint,
+                    hintStyle: GoogleFonts.poppins(color: Colors.white54, fontSize: 14),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.only(right: 15),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCoverDurationDropdown() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "Cover Duration",
+          style: GoogleFonts.poppins(
+            color: Colors.white70,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          height: 55,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withOpacity(0.1),
+                Colors.white.withOpacity(0.05),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withOpacity(0.2)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 50,
+                alignment: Alignment.center,
+                child: Icon(Icons.calendar_today, color: Colors.white54, size: 20),
+              ),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _coverDurationController.text.isEmpty ? null : _coverDurationController.text,
+                  items: _coverDurations.map((String duration) {
+                    return DropdownMenuItem<String>(
+                      value: duration,
+                      child: Text(
+                        duration,
+                        style: GoogleFonts.poppins(color: Colors.white, fontSize: 14),
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _coverDurationController.text = newValue!;
+                    });
+                  },
+                  dropdownColor: const Color.fromARGB(255, 16, 52, 90),
+                  style: GoogleFonts.poppins(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: "Select cover duration",
+                    hintStyle: GoogleFonts.poppins(color: Colors.white54, fontSize: 14),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.only(right: 15),
+                  ),
+                  icon: Icon(Icons.arrow_drop_down, color: Colors.white70),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDocumentUploads() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.orangeAccent.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.attach_file, color: Colors.orangeAccent, size: 18),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              "Document Uploads (Optional)",
+              style: GoogleFonts.poppins(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          "You can upload these documents now or later - Application can be submitted without them",
+          style: GoogleFonts.poppins(
+            fontSize: 12,
+            color: Colors.greenAccent,
+          ),
+        ),
+        const SizedBox(height: 15),
+        _buildUploadItem("id_document", "ID Document", Icons.badge, Colors.blueAccent),
+        const SizedBox(height: 10),
+        _buildUploadItem("proof_of_address", "Proof of Address", Icons.home_work, Colors.greenAccent),
+        const SizedBox(height: 10),
+        _buildVehiclePhotosUpload(),
+        const SizedBox(height: 10),
+        _buildUploadItem("vehicle_registration", "Vehicle Registration", Icons.description, Colors.purpleAccent),
+      ],
+    );
+  }
+
+  Widget _buildVehiclePhotosUpload() {
+    final isUploaded = _uploadedFiles['vehicle_photos']!;
+    final isUploading = _uploadingFiles['vehicle_photos']!;
+    final fileName = _fileNames['vehicle_photos']!;
+
+    return Column(
+      children: [
+        // Regular Upload Option
+        Container(
+          padding: const EdgeInsets.all(15),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.orangeAccent.withOpacity(0.3)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.camera_alt, color: Colors.orangeAccent, size: 24),
+              const SizedBox(width: 15),
+              Expanded(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      "AutoSure",
+                      "Vehicle Photos",
                       style: GoogleFonts.poppins(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
                         color: Colors.white,
-                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    if (isUploaded && fileName.isNotEmpty)
+                      Text(
+                        fileName,
+                        style: GoogleFonts.poppins(
+                          fontSize: 12,
+                          color: Colors.greenAccent,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    if (isUploading)
+                      Text(
+                        "Uploading...",
+                        style: GoogleFonts.poppins(
+                          fontSize: 12,
+                          color: Colors.orangeAccent,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (isUploading)
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orangeAccent),
+                )
+              else if (isUploaded)
+                Row(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.green, size: 22),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => _removeFile('vehicle_photos'),
+                      child: Icon(Icons.close, color: Colors.red, size: 18),
+                    ),
+                  ],
+                )
+              else
+                Material(
+                  color: Colors.orangeAccent,
+                  borderRadius: BorderRadius.circular(8),
+                  child: InkWell(
+                    onTap: () => _uploadFile('vehicle_photos'),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      child: Text(
+                        "Upload",
+                        style: GoogleFonts.poppins(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        
+        // 3D Capture Recommendation
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.all(15),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Colors.purpleAccent.withOpacity(0.2), Colors.blueAccent.withOpacity(0.1)],
+            ),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.purpleAccent.withOpacity(0.4)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.purpleAccent.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.photo_camera, color: Colors.purpleAccent, size: 20),
+              ),
+              const SizedBox(width: 15),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Recommended: 3D Vehicle Capture",
+                      style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
                       ),
                     ),
                     Text(
-                      "Apply for Insurance",
+                      "Enhanced documentation for faster processing",
                       style: GoogleFonts.poppins(
                         fontSize: 12,
                         color: Colors.white70,
@@ -420,553 +892,216 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> with Ticker
                     ),
                   ],
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Colors.blueAccent, Colors.lightBlue],
-                    ),
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.security, color: Colors.white, size: 14),
-                      const SizedBox(width: 4),
-                      Text(
-                        "Step 2/2",
-                        style: GoogleFonts.poppins(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBackButton() {
-    return ScaleTransition(
-      scale: _scaleAnimation,
-      child: FadeTransition(
-        opacity: _fadeAnimation,
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(15),
-          child: InkWell(
-            onTap: () => Navigator.maybePop(context),
-            borderRadius: BorderRadius.circular(15),
-            child: Container(
-              width: 45,
-              height: 45,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.white.withOpacity(0.15),
-                    Colors.white.withOpacity(0.05),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: Colors.white.withOpacity(0.2)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.blueAccent.withOpacity(0.3),
-                    blurRadius: 10,
-                    spreadRadius: 2,
-                  ),
-                ],
               ),
-              child: const Icon(
-                Icons.arrow_back_ios_new_rounded,
-                color: Colors.white,
-                size: 18,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMainContent() {
-    return Padding(
-      padding: const EdgeInsets.all(25.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildWelcomeSection(),
-          const SizedBox(height: 30),
-          _buildPersonalVerification(),
-          const SizedBox(height: 30),
-          _buildDocumentUploads(),
-          const SizedBox(height: 30),
-          _buildDeclaration(),
-          const SizedBox(height: 40),
-          _buildSubmitButton(),
-          const SizedBox(height: 80),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWelcomeSection() {
-    return ScaleTransition(
-      scale: _scaleAnimation,
-      child: FadeTransition(
-        opacity: _fadeAnimation,
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(25),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                Colors.white.withOpacity(0.15),
-                Colors.white.withOpacity(0.08),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.white.withOpacity(0.2)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                "Finalize Application",
-                style: GoogleFonts.poppins(
-                  fontSize: 32,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                "Complete your insurance application with secure verification",
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  color: Colors.white70,
-                ),
-              ),
-              const SizedBox(height: 15),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.greenAccent.withOpacity(0.2),
+              Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+                child: InkWell(
+                  onTap: _launchAdvancedCapture,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
-                ),
-                child: Text(
-                  "Step 2 of 2 - Final Verification",
-                  style: GoogleFonts.poppins(
-                    color: Colors.greenAccent,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Colors.purpleAccent, Colors.blueAccent],
+                      ),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.camera_enhance, color: Colors.white, size: 16),
+                        const SizedBox(width: 6),
+                        Text(
+                          "3D SCAN",
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ],
           ),
         ),
-      ),
+      ],
     );
   }
 
-  Widget _buildPersonalVerification() {
-    return SlideTransition(
-      position: _slideAnimation,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            "Personal Verification",
-            style: GoogleFonts.poppins(
-              fontSize: 22,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 20),
-          _buildPremiumTextField(
-            controller: _idController,
-            focusNode: _idFocusNode,
-            isFocused: _isIdFocused,
-            hintText: "ID Number or Passport Number",
-            prefixIcon: Icons.badge_rounded,
-          ),
-          const SizedBox(height: 15),
-          _buildPremiumTextField(
-            controller: _contactController,
-            focusNode: _contactFocusNode,
-            isFocused: _isContactFocused,
-            hintText: "Contact Number",
-            prefixIcon: Icons.phone_rounded,
-          ),
-          const SizedBox(height: 15),
-          _buildPremiumTextField(
-            controller: _addressController,
-            focusNode: _addressFocusNode,
-            isFocused: _isAddressFocused,
-            hintText: "Residential Address",
-            prefixIcon: Icons.home_rounded,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPremiumTextField({
-    required TextEditingController controller,
-    required FocusNode focusNode,
-    required bool isFocused,
-    required String hintText,
-    required IconData prefixIcon,
-  }) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: isFocused
-              ? [
-                  Colors.white.withOpacity(0.25),
-                  Colors.white.withOpacity(0.15),
-                ]
-              : [
-                  Colors.white.withOpacity(0.15),
-                  Colors.white.withOpacity(0.08),
-                ],
-        ),
-        boxShadow: isFocused
-            ? [
-                BoxShadow(
-                  color: Colors.blueAccent.withOpacity(0.4),
-                  blurRadius: 15,
-                  spreadRadius: 2,
-                ),
-              ]
-            : [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 10,
-                  offset: const Offset(0, 5),
-                ),
-              ],
-        border: Border.all(
-          color: isFocused ? Colors.blueAccent.withOpacity(0.6) : Colors.transparent,
-          width: 1.5,
-        ),
-      ),
-      child: TextField(
-        controller: controller,
-        focusNode: focusNode,
-        style: GoogleFonts.poppins(
-          color: Colors.white,
-          fontSize: 16,
-          fontWeight: FontWeight.w500,
-        ),
-        decoration: InputDecoration(
-          hintText: hintText,
-          hintStyle: GoogleFonts.poppins(
-            color: Colors.white54,
-            fontSize: 16,
-          ),
-          border: InputBorder.none,
-          prefixIcon: Icon(
-            prefixIcon,
-            color: isFocused ? Colors.blueAccent.shade200 : Colors.white54,
-            size: 20,
-          ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDocumentUploads() {
-    return SlideTransition(
-      position: _slideAnimation,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            "Document Uploads",
-            style: GoogleFonts.poppins(
-              fontSize: 22,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            "Supported formats: JPG, PNG, PDF, DOC (Max 10MB)",
-            style: GoogleFonts.poppins(
-              fontSize: 12,
-              color: Colors.white54,
-            ),
-          ),
-          const SizedBox(height: 20),
-          _buildUploadItem("id_document", "ID/Driver's License", Icons.badge_rounded, Colors.blueAccent),
-          const SizedBox(height: 12),
-          _buildUploadItem("proof_of_address", "Proof of Address", Icons.home_work_rounded, Colors.greenAccent),
-          const SizedBox(height: 12),
-          _buildUploadItem("vehicle_photos", "Vehicle Photos", Icons.camera_alt_rounded, Colors.orangeAccent),
-          const SizedBox(height: 12),
-          _buildUploadItem("vehicle_registration", "Vehicle Registration", Icons.description_rounded, Colors.purpleAccent, optional: true),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUploadItem(String documentType, String title, IconData icon, Color color, {bool optional = false}) {
-    final isUploading = _uploadProgress[documentType] != null && _uploadProgress[documentType]! < 1.0;
-    final hasFile = _uploadedFiles[documentType]!['uploaded'];
-    final progress = _uploadProgress[documentType] ?? 0.0;
-    final fileName = _uploadedFiles[documentType]!['name'];
+  Widget _buildUploadItem(String documentType, String title, IconData icon, Color color) {
+    final isUploaded = _uploadedFiles[documentType]!;
+    final isUploading = _uploadingFiles[documentType]!;
+    final fileName = _fileNames[documentType]!;
 
     return Container(
+      padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [color.withOpacity(0.2), color.withOpacity(0.05)],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-        ),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: color.withOpacity(0.2)),
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Row(
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(width: 15),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(icon, color: color, size: 22),
-                ),
-                const SizedBox(width: 15),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                      if (optional)
-                        Text(
-                          "Optional",
-                          style: GoogleFonts.poppins(
-                            fontSize: 12,
-                            color: Colors.white54,
-                          ),
-                        ),
-                      if (hasFile && !isUploading)
-                        Text(
-                          fileName,
-                          style: GoogleFonts.poppins(
-                            fontSize: 12,
-                            color: Colors.white70,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                    ],
+                Text(
+                  title,
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
                   ),
                 ),
-                if (isUploading)
-                  SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      value: progress,
-                      strokeWidth: 3,
-                      color: color,
+                if (isUploaded && fileName.isNotEmpty)
+                  Text(
+                    fileName,
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: Colors.greenAccent,
                     ),
-                  )
-                else if (hasFile)
-                  Row(
-                    children: [
-                      Icon(Icons.check_circle, color: Colors.green, size: 20),
-                      const SizedBox(width: 8),
-                      Material(
-                        color: Colors.transparent,
-                        borderRadius: BorderRadius.circular(8),
-                        child: InkWell(
-                          onTap: () => _removeFile(documentType),
-                          borderRadius: BorderRadius.circular(8),
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            child: Icon(Icons.close, color: Colors.red, size: 16),
-                          ),
-                        ),
-                      ),
-                    ],
-                  )
-                else
-                  Material(
-                    color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(12),
-                    child: InkWell(
-                      onTap: () => _uploadFile(documentType),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [color, color.withOpacity(0.7)],
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(Icons.upload_rounded, color: Colors.white, size: 16),
-                            const SizedBox(width: 6),
-                            Text(
-                              "Upload",
-                              style: GoogleFonts.poppins(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                if (isUploading)
+                  Text(
+                    "Uploading...",
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: Colors.orangeAccent,
                     ),
                   ),
               ],
             ),
-            if (isUploading) ...[
-              const SizedBox(height: 10),
-              LinearProgressIndicator(
-                value: progress,
-                backgroundColor: Colors.white.withOpacity(0.1),
-                color: color,
-                borderRadius: BorderRadius.circular(5),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                '${(progress * 100).toStringAsFixed(1)}%',
-                style: GoogleFonts.poppins(
-                  color: Colors.white70,
-                  fontSize: 10,
+          ),
+          if (isUploading)
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2, color: color),
+            )
+          else if (isUploaded)
+            Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green, size: 22),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => _removeFile(documentType),
+                  child: Icon(Icons.close, color: Colors.red, size: 18),
+                ),
+              ],
+            )
+          else
+            Material(
+              color: color,
+              borderRadius: BorderRadius.circular(8),
+              child: InkWell(
+                onTap: () => _uploadFile(documentType),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  child: Text(
+                    "Upload",
+                    style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
-            ],
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
 
   Widget _buildDeclaration() {
-    return SlideTransition(
-      position: _slideAnimation,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            "Declaration",
-            style: GoogleFonts.poppins(
-              fontSize: 22,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.verified_user, color: Colors.redAccent, size: 18),
             ),
-          ),
-          const SizedBox(height: 20),
-          _buildDeclarationItem(
-            "I confirm all information is true and accurate",
-            _infoConfirmed,
-            Icons.verified_rounded,
-            Colors.greenAccent,
-            (value) => setState(() => _infoConfirmed = value ?? false),
-          ),
-          const SizedBox(height: 12),
-          _buildDeclarationItem(
-            "I agree to the Terms & Conditions",
-            _termsAgreed,
-            Icons.description_rounded,
-            Colors.blueAccent,
-            (value) => setState(() => _termsAgreed = value ?? false),
-          ),
-        ],
-      ),
+            const SizedBox(width: 8),
+            Text(
+              "Declaration",
+              style: GoogleFonts.poppins(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 15),
+        _buildAdvancedCheckbox(
+          "I confirm all information provided is true and accurate to the best of my knowledge",
+          _infoConfirmed,
+          (value) => setState(() => _infoConfirmed = value ?? false),
+        ),
+        const SizedBox(height: 10),
+        _buildAdvancedCheckbox(
+          "I agree to the Terms & Conditions and Privacy Policy of AutoSure Insurance", 
+          _termsAgreed,
+          (value) => setState(() => _termsAgreed = value ?? false),
+        ),
+      ],
     );
   }
 
-  Widget _buildDeclarationItem(String title, bool value, IconData icon, Color color, ValueChanged<bool?> onChanged) {
+  Widget _buildAdvancedCheckbox(String title, bool value, ValueChanged<bool?> onChanged) {
     return Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(15),
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: () => onChanged(!value),
-        borderRadius: BorderRadius.circular(15),
+        borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: value
-                  ? [color.withOpacity(0.3), color.withOpacity(0.1)]
-                  : [Colors.white.withOpacity(0.1), Colors.white.withOpacity(0.05)],
+            color: value ? Colors.greenAccent.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: value ? Colors.greenAccent.withOpacity(0.3) : Colors.white.withOpacity(0.1),
             ),
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: value ? color.withOpacity(0.3) : Colors.white.withOpacity(0.1)),
           ),
           child: Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                width: 24,
+                height: 24,
                 decoration: BoxDecoration(
-                  color: value ? color.withOpacity(0.2) : Colors.white.withOpacity(0.1),
-                  shape: BoxShape.circle,
+                  color: value ? Colors.greenAccent : Colors.transparent,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: value ? Colors.greenAccent : Colors.white54,
+                  ),
                 ),
-                child: Icon(
-                  icon,
-                  color: value ? color : Colors.white54,
-                  size: 20,
-                ),
+                child: value ? Icon(Icons.check, color: Colors.white, size: 16) : null,
               ),
-              const SizedBox(width: 15),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   title,
                   style: GoogleFonts.poppins(
-                    color: value ? Colors.white : Colors.white70,
-                    fontSize: 14,
-                    fontWeight: value ? FontWeight.w600 : FontWeight.w500,
+                    color: value ? Colors.greenAccent : Colors.white70,
+                    fontSize: 13,
                   ),
                 ),
-              ),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  color: value ? color : Colors.transparent,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: value ? color : Colors.white54,
-                    width: 2,
-                  ),
-                ),
-                child: value
-                    ? Icon(Icons.check, color: Colors.white, size: 16)
-                    : null,
               ),
             ],
           ),
@@ -978,250 +1113,158 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> with Ticker
   Widget _buildSubmitButton() {
     final isEnabled = _isFormValid() && !_isSubmitting;
     
-    return Center(
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(20),
-        child: InkWell(
-          onTap: isEnabled ? _submitApplication : null,
-          borderRadius: BorderRadius.circular(20),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 18),
+    return Column(
+      children: [
+        if (!isEnabled && !_isSubmitting) 
+          Container(
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              gradient: isEnabled
-                  ? LinearGradient(
-                      colors: [Colors.greenAccent, Colors.green],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    )
-                  : LinearGradient(
-                      colors: [Colors.grey.shade600, Colors.grey.shade400],
-                    ),
-              boxShadow: isEnabled
-                  ? [
-                      BoxShadow(
-                        color: Colors.greenAccent.withOpacity(0.5),
-                        blurRadius: 20,
-                        spreadRadius: 3,
-                      ),
-                    ]
-                  : null,
+              color: Colors.orangeAccent.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.orangeAccent.withOpacity(0.3)),
             ),
-            child: _isSubmitting
-                ? SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
+            child: Row(
+              children: [
+                Icon(Icons.info, color: Colors.orangeAccent, size: 16),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Fill in all required fields and agree to declarations to submit',
+                    style: GoogleFonts.poppins(
+                      color: Colors.orangeAccent,
+                      fontSize: 12,
                     ),
-                  )
-                : Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.send_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        "SUBMIT APPLICATION",
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 1.2,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
                   ),
+                ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 15),
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: isEnabled ? _submitApplication : null,
+            borderRadius: BorderRadius.circular(15),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(15),
+                gradient: isEnabled
+                    ? const LinearGradient(
+                        colors: [Colors.greenAccent, Colors.green],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      )
+                    : LinearGradient(
+                        colors: [Colors.grey.shade600, Colors.grey.shade400],
+                      ),
+                boxShadow: isEnabled
+                    ? [
+                        BoxShadow(
+                          color: Colors.greenAccent.withOpacity(0.5),
+                          blurRadius: 20,
+                          spreadRadius: 3,
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Center(
+                child: _isSubmitting
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            "SUBMITTING...",
+                            style: GoogleFonts.poppins(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                          const SizedBox(width: 12),
+                          Text(
+                            "SUBMIT APPLICATION",
+                            style: GoogleFonts.poppins(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
 
   Future<void> _submitApplication() async {
-    setState(() {
-      _isSubmitting = true;
-    });
+    if (!_isFormValid()) return;
+
+    setState(() => _isSubmitting = true);
 
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) throw Exception('User not logged in');
+      if (user == null) throw Exception('Please log in');
 
-      // Prepare document URLs
-      Map<String, dynamic> documents = {};
-      _uploadedFiles.forEach((key, value) {
-        if (value['uploaded']) {
-          documents[key] = {
-            'fileName': value['name'],
-            'fileUrl': value['url'],
-            'uploadedAt': DateTime.now().millisecondsSinceEpoch,
-          };
-        }
-      });
-
-      // Save application data to Firebase
-      await _applicationsRef.child(user.uid).set({
+      // Generate a unique application ID
+      final applicationId = _applicationsRef.push().key;
+      
+      Map<String, dynamic> applicationData = {
         'personalInfo': {
           'idNumber': _idController.text,
           'contactNumber': _contactController.text,
           'address': _addressController.text,
+          'coverDuration': _coverDurationController.text,
         },
-        'documents': documents,
-        'status': 'pending',
+        'documents': _uploadedFiles,
+        'fileNames': _fileNames,
+        'status': 'submitted',
         'submittedAt': DateTime.now().millisecondsSinceEpoch,
         'userId': user.uid,
-      });
+        'userEmail': user.email ?? 'unknown',
+        'applicationId': applicationId,
+      };
 
-      _showSuccessSnackbar('Application submitted successfully!');
+      // Use either quoteData or initialQuoteData
+      final quoteData = widget.quoteData ?? widget.initialQuoteData;
+      if (quoteData != null) {
+        applicationData['quoteData'] = quoteData;
+      }
+
+      // Save under a unique application ID for proper querying
+      await _applicationsRef.child(applicationId!).set(applicationData);
       
-      // Navigate to home screen after success
+      _showSuccessSnackbar('🎉 Application submitted successfully!');
+      
       await Future.delayed(const Duration(seconds: 2));
-      
       if (mounted) {
         Navigator.pushAndRemoveUntil(
           context,
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) => const HomeScreen(username: 'User'),
-            transitionsBuilder: (context, animation, secondaryAnimation, child) {
-              const begin = Offset(0.0, 1.0);
-              const end = Offset.zero;
-              const curve = Curves.easeInOutQuart;
-              var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-              return SlideTransition(position: animation.drive(tween), child: child);
-            },
-            transitionDuration: const Duration(milliseconds: 800),
-          ),
+          MaterialPageRoute(builder: (context) => HomeScreen(username: user.displayName ?? 'User')),
           (route) => false,
         );
       }
 
     } catch (e) {
-      _showErrorSnackbar('Failed to submit application: $e');
+      _showErrorSnackbar('Submission failed: ${e.toString()}');
     } finally {
-      if (mounted) {
-        setState(() {
-          _isSubmitting = false;
-        });
-      }
+      if (mounted) setState(() => _isSubmitting = false);
     }
-  }
-
-  Widget _buildLoadingOverlay() {
-    return Container(
-      color: Colors.black.withOpacity(0.7),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.greenAccent),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              "Submitting Application...",
-              style: GoogleFonts.poppins(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAdvancedBackground() {
-    return AnimatedBuilder(
-      animation: _glowController,
-      builder: (context, child) {
-        return Container(
-          decoration: BoxDecoration(
-            gradient: RadialGradient(
-              center: Alignment(0.5, _glowController.value - 0.5),
-              radius: 2.0,
-              colors: [
-                const Color.fromARGB(255, 16, 52, 90).withOpacity(0.9),
-                const Color.fromARGB(255, 8, 25, 45),
-                const Color.fromARGB(255, 4, 15, 26),
-              ],
-              stops: const [0.1, 0.6, 1.0],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildQuantumParticles() {
-    return AnimatedBuilder(
-      animation: _particleController,
-      builder: (context, child) {
-        return Stack(
-          children: [
-            for (int i = 0; i < 6; i++)
-              Positioned(
-                left: (i * 120) % MediaQuery.of(context).size.width,
-                top: (i * 100) % MediaQuery.of(context).size.height,
-                child: _QuantumParticle(
-                  size: 2 + (i % 3).toDouble(),
-                  delay: i * 0.5,
-                  controller: _particleController,
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _QuantumParticle extends StatelessWidget {
-  final double size;
-  final double delay;
-  final AnimationController controller;
-
-  const _QuantumParticle({
-    required this.size,
-    required this.delay,
-    required this.controller,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (context, child) {
-        final animationValue = (controller.value + delay) % 1.0;
-        return Opacity(
-          opacity: 0.2 + animationValue * 0.3,
-          child: Transform.translate(
-            offset: Offset(
-              (animationValue * 2 - 1) * 40,
-              (animationValue * 3 - 1.5) * 25,
-            ),
-            child: Container(
-              width: size,
-              height: size,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [
-                    Colors.blueAccent.withOpacity(0.6),
-                    Colors.lightBlue.withOpacity(0.2),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
   }
 }

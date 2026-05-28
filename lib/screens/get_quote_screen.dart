@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'apply_insurance_screen.dart';
 
 class GetQuoteScreen extends StatefulWidget {
@@ -15,79 +17,36 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
   late Animation<double> _fadeAnimation;
   late Animation<double> _scaleAnimation;
   late Animation<double> _progressAnimation;
-  
+
   int _currentStep = 0;
-  
+
   // Text editing controllers
-  final TextEditingController _makeModelController = TextEditingController();
+  final TextEditingController _brandController = TextEditingController();
+  final TextEditingController _modelController = TextEditingController();
+  final TextEditingController _provinceController = TextEditingController();
+  final TextEditingController _placeController = TextEditingController();
   final TextEditingController _yearController = TextEditingController();
-  final TextEditingController _regNumberController = TextEditingController();
   final TextEditingController _mileageController = TextEditingController();
   final TextEditingController _valueController = TextEditingController();
   final TextEditingController _ageController = TextEditingController();
   final TextEditingController _claimsHistoryController = TextEditingController();
-
-  // South African specific data
-  final List<String> _saCarMakes = [
-    'Toyota', 'Volkswagen', 'Ford', 'Hyundai', 'Nissan',
-    'BMW', 'Mercedes-Benz', 'Kia', 'Isuzu', 'Mahindra'
-  ];
-
-  final Map<String, List<String>> _saCarModels = {
-    'Toyota': ['Hilux', 'Corolla', 'Fortuner', 'RAV4', 'Yaris'],
-    'Volkswagen': ['Polo', 'Golf', 'T-Cross', 'Tiguan', 'Amarok'],
-    'Ford': ['Ranger', 'EcoSport', 'Figo', 'Focus', 'Everest'],
-    'Hyundai': ['i20', 'Creta', 'Tucson', 'Grand i10', 'Venue'],
-    'Nissan': ['NP200', 'Navara', 'Qashqai', 'X-Trail', 'Micra'],
-    'BMW': ['3 Series', 'X3', 'X5', '1 Series', 'X1'],
-    'Mercedes-Benz': ['C-Class', 'A-Class', 'GLC', 'E-Class', 'GLE'],
-    'Kia': ['Seltos', 'Picanto', 'Sorento', 'Sportage', 'Rio'],
-    'Isuzu': ['D-Max', 'MU-X'],
-    'Mahindra': ['Scorpio', 'XUV300', 'Bolero', 'Thar']
-  };
-
-  // Removed risk indicators from user-facing dropdown
-  final List<String> _saAreas = [
-    'Honeydew', 'Sandton', 'Johannesburg CBD', 'Pretoria East', 'Soshanguve', 
-    'Durban North', 'Umlazi', 'Cape Town City Bowl', 'Nyanga', 'Stellenbosch', 
-    'Port Elizabeth', 'Bloemfontein'
-  ];
-
-  final List<String> _saColors = ['White', 'Silver', 'Black', 'Blue', 'Red', 'Grey', 'Other'];
-
-  // Risk mapping for internal calculation only
-  final Map<String, double> _areaRiskMultipliers = {
-    'Honeydew': 1.0,           // Low risk
-    'Sandton': 1.2,            // Medium risk
-    'Johannesburg CBD': 1.5,   // High risk
-    'Pretoria East': 1.0,      // Low risk
-    'Soshanguve': 1.5,         // High risk
-    'Durban North': 1.0,       // Low risk
-    'Umlazi': 1.5,             // High risk
-    'Cape Town City Bowl': 1.2,// Medium risk
-    'Nyanga': 1.5,             // High risk
-    'Stellenbosch': 1.0,       // Low risk
-    'Port Elizabeth': 1.2,     // Medium risk
-    'Bloemfontein': 1.0,       // Low risk
-  };
+  final TextEditingController _regNumberController = TextEditingController();
+  final TextEditingController _colorController = TextEditingController();
 
   // Form values
-  String _selectedMake = '';
-  String _selectedModel = '';
-  String _location = '';
-  String _color = '';
-  String _parking = 'Street';
-  bool _peakHours = false;
+  String _parking = 'Garage';
   bool _hasTracker = false;
   bool _hasAlarm = false;
   bool _hasImmobilizer = false;
   bool _married = false;
+  bool _peakHours = false;
   String _coverageType = 'Comprehensive';
   String _usage = 'Daily Commute';
+  String? _error;
 
   final List<String> _stepTitles = [
     "Vehicle Details",
-    "Driver Profile", 
+    "Driver Profile",
     "Coverage Options",
     "Location & Usage"
   ];
@@ -110,24 +69,24 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     );
-    
+
     _progressController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
-    
+
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _masterController, curve: Curves.easeInOutQuart),
     );
-    
+
     _scaleAnimation = Tween<double>(begin: 0.9, end: 1.0).animate(
       CurvedAnimation(parent: _masterController, curve: Curves.elasticOut),
     );
-    
+
     _progressAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _progressController, curve: Curves.easeInOut),
     );
-    
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _masterController.forward();
@@ -136,101 +95,265 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
     });
   }
 
-  // Realistic South African Quote Calculation Logic
-  Map<String, double> _calculateQuote() {
-    // Base premium calculation based on realistic SA market rates
-    final vehicleValue = double.tryParse(_valueController.text) ?? 0;
-    final vehicleYear = int.tryParse(_yearController.text) ?? DateTime.now().year;
-    final vehicleAge = DateTime.now().year - vehicleYear;
+  // Prepare quote data
+  Map<String, dynamic> _prepareQuoteData(Map<String, dynamic> monthlyPremiums) {
+    return {
+      'brand': _brandController.text,
+      'model': _modelController.text,
+      'value': _valueController.text,
+      'year': _yearController.text,
+      'color': _colorController.text,
+      'regNumber': _regNumberController.text,
+      'province': _provinceController.text,
+      'place': _placeController.text,
+      'coverageType': _coverageType,
+      'premiums': monthlyPremiums,
+      'mileage': _mileageController.text,
+      'driverAge': _ageController.text,
+      'claimsHistory': _claimsHistoryController.text,
+      'parking': _parking,
+      'security': {
+        'tracker': _hasTracker,
+        'alarm': _hasAlarm,
+        'immobilizer': _hasImmobilizer,
+      },
+      'usage': _usage,
+      'quoteDate': DateTime.now().toIso8601String(),
+    };
+  }
+
+  // Navigate to ApplyInsuranceScreen with quote data
+  void _navigateToApplyScreen(Map<String, dynamic> monthlyPremiums) {
+    final quoteData = _prepareQuoteData(monthlyPremiums);
     
-    // Base monthly premium calculation (more realistic for SA)
-    double baseMonthlyPremium = 0;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ApplyInsuranceScreen(quoteData: quoteData),
+      ),
+    );
+  }
+
+  // Save quote locally and show confirmation
+  void _saveQuoteLocally(Map<String, dynamic> monthlyPremiums) {
+    final quoteData = _prepareQuoteData(monthlyPremiums);
     
-    if (vehicleValue <= 50000) {
-      baseMonthlyPremium = 350; // Small, low-value cars
-    } else if (vehicleValue <= 150000) {
-      baseMonthlyPremium = 650; // Average family cars
-    } else if (vehicleValue <= 300000) {
-      baseMonthlyPremium = 950; // Mid-range vehicles
-    } else if (vehicleValue <= 500000) {
-      baseMonthlyPremium = 1500; // Luxury vehicles
-    } else {
-      baseMonthlyPremium = 2500; // High-end luxury vehicles
+    // In a real app, you might save to local storage or database
+    // For now, we'll just show a confirmation and keep in memory
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Text(
+              'Quote saved! You can apply later from your profile',
+              style: GoogleFonts.poppins(color: Colors.white),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+
+    // Close the quote results modal
+    Navigator.pop(context);
+  }
+
+  // Show directory of examples
+  void _showDirectory() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color.fromARGB(255, 16, 52, 90),
+        title: Text(
+          "How Premiums Are Calculated",
+          style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.yellowAccent.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.yellowAccent.withOpacity(0.3)),
+                ),
+                child: Text(
+                  "Formula: Premium = Vehicle Value × All Risk Factors",
+                  style: GoogleFonts.poppins(
+                    color: Colors.yellowAccent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 15),
+              Text(
+                "Brands & Models (from system):",
+                style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+              Text(
+                "Toyota Hilux, Volkswagen Polo, Ford Ranger, Suzuki Swift, etc.",
+                style: GoogleFonts.poppins(color: Colors.white70, fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                "Provinces & Places (risk-rated):",
+                style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+              Text(
+                "Provinces: Gauteng, Western Cape, KwaZulu-Natal, etc.\nPlaces: Sandton, Soweto, Khayelitsha, Durban North, etc.",
+                style: GoogleFonts.poppins(color: Colors.white70, fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                "Example Calculations:",
+                style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+              Text(
+                "• R500k Hilux + High Risk Area = R3,500-R5,000/month\n• R500k Hilux + Low Risk Area = R1,800-R2,500/month\n• R200k Polo + Medium Risk = R900-R1,500/month",
+                style: GoogleFonts.poppins(color: Colors.white70, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text("Got It", style: GoogleFonts.poppins(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // API call to get quote
+  Future<Map<String, dynamic>?> _calculateQuote() async {
+    try {
+      final vehicleValue = double.tryParse(_valueController.text) ?? 0.0;
+      
+      // Validate critical inputs
+      if (vehicleValue <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Please enter a valid vehicle value'))
+        );
+        return null;
+      }
+      
+      if (_brandController.text.isEmpty || _modelController.text.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Please enter vehicle brand and model'))
+        );
+        return null;
+      }
+
+      if (_provinceController.text.isEmpty || _placeController.text.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Please enter province and place'))
+        );
+        return null;
+      }
+
+      final response = await http.post(
+        Uri.parse('http://localhost:8000/get_quote'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          // BASE CALCULATION INPUT
+          'vehicle_value': vehicleValue,
+          
+          // STATIC RISK MULTIPLIERS (from your CSV data)
+          'brand': _brandController.text.trim(),
+          'model': _modelController.text.trim(),
+          'province': _provinceController.text.trim(),
+          'place': _placeController.text.trim(),
+          
+          // DYNAMIC RISK FACTORS
+          'driver_age': int.tryParse(_ageController.text) ?? 30,
+          'claims_history': int.tryParse(_claimsHistoryController.text) ?? 0,
+          'vehicle_year': int.tryParse(_yearController.text) ?? 2020,
+          'annual_mileage': int.tryParse(_mileageController.text) ?? 0,
+          'vehicle_usage': _usage.toLowerCase().replaceAll(' ', '_'),
+          'parking_type': _parking.toLowerCase().replaceAll(' ', '_'),
+          'has_tracker': _hasTracker ? 1 : 0,
+          'has_alarm': _hasAlarm ? 1 : 0,
+          'has_immobilizer': _hasImmobilizer ? 1 : 0,
+          'married': _married ? 1 : 0,
+          'peak_hours_usage': _peakHours ? 1 : 0,
+          'color': _colorController.text.trim().toLowerCase(),
+          'reg_number': _regNumberController.text.trim().toUpperCase(),
+          
+          // Calculate all three coverage types
+          'coverage_type': 'all',
+        }),
+      ).timeout(const Duration(seconds: 15));
+      
+      print('API Response: ${response.statusCode} ${response.body}');
+      
+      if (response.statusCode == 200) {
+        setState(() => _error = null);
+        return jsonDecode(response.body);
+      } else {
+        setState(() => _error = 'API Error: ${response.statusCode} ${response.body}');
+        return null;
+      }
+    } catch (e) {
+      setState(() => _error = 'Connection error: $e');
+      print('API Error: $e');
+      return null;
+    }
+  }
+
+  String? _validateInputs() {
+    if (_currentStep == 0) {
+      if (_brandController.text.isEmpty) return 'Please enter vehicle brand';
+      if (_modelController.text.isEmpty) return 'Please enter vehicle model';
+      if (_valueController.text.isEmpty) return 'Please enter vehicle value';
+      
+      final value = double.tryParse(_valueController.text);
+      if (value == null || value < 10000) {
+        return 'Please enter a valid vehicle value (minimum R10,000)';
+      }
+      
+      final year = int.tryParse(_yearController.text);
+      if (year == null || year < 1990 || year > DateTime.now().year + 1) {
+        return 'Please enter a valid vehicle year';
+      }
     }
     
-    // Adjustments based on factors
-    double riskMultiplier = 1.0;
+    if (_currentStep == 1) {
+      if (_ageController.text.isEmpty) return 'Please enter driver age';
+      final age = int.tryParse(_ageController.text);
+      if (age == null || age < 18 || age > 100) {
+        return 'Please enter a valid age (18-100)';
+      }
+    }
     
-    // Driver age factor
-    final driverAge = int.tryParse(_ageController.text) ?? 30;
-    if (driverAge < 25) riskMultiplier *= 1.6; // Young drivers pay more
-    else if (driverAge > 60) riskMultiplier *= 1.3; // Senior drivers
-    else if (driverAge >= 25 && driverAge <= 30) riskMultiplier *= 1.2;
-    else if (driverAge > 30 && driverAge <= 40) riskMultiplier *= 1.0; // Prime age
-    else if (driverAge > 40 && driverAge <= 50) riskMultiplier *= 0.95; // Experienced
-    else riskMultiplier *= 1.1;
+    if (_currentStep == 3) {
+      if (_provinceController.text.isEmpty) return 'Please enter province';
+      if (_placeController.text.isEmpty) return 'Please enter place';
+    }
     
-    // Claims history
-    final claimsCount = int.tryParse(_claimsHistoryController.text) ?? 0;
-    riskMultiplier += (claimsCount * 0.25); // Each claim increases premium
-    
-    // Location risk (using internal mapping, not visible to user)
-    final areaMultiplier = _areaRiskMultipliers[_location] ?? 1.2;
-    riskMultiplier *= areaMultiplier;
-    
-    // Vehicle usage
-    if (_usage == 'Daily Commute') riskMultiplier *= 1.15;
-    else if (_usage == 'Business Use') riskMultiplier *= 1.4;
-    else if (_usage == 'Occasional') riskMultiplier *= 0.9;
-    else if (_usage == 'Weekends Only') riskMultiplier *= 0.85;
-    
-    // Vehicle age adjustment
-    if (vehicleAge > 10) riskMultiplier *= 1.3; // Older cars cost more to insure
-    else if (vehicleAge > 5) riskMultiplier *= 1.1;
-    else if (vehicleAge <= 3) riskMultiplier *= 0.9; // Newer cars get discount
-    
-    // Security features discounts
-    if (_hasTracker) riskMultiplier *= 0.85; // Good discount for tracker
-    if (_hasAlarm) riskMultiplier *= 0.95;
-    if (_hasImmobilizer) riskMultiplier *= 0.92;
-    
-    // Parking location
-    if (_parking == 'Garage') riskMultiplier *= 0.9;
-    else if (_parking == 'Secured Lot') riskMultiplier *= 0.85;
-    
-    // Peak hours penalty
-    if (_peakHours) riskMultiplier *= 1.2;
-    
-    // Marital status discount
-    if (_married) riskMultiplier *= 0.9;
-    
-    // Apply risk multiplier to base premium
-    baseMonthlyPremium *= riskMultiplier;
-    
-    // Plan type adjustments
-    Map<String, double> monthlyPremiums = {};
-    
-    // Comprehensive Plan (Full coverage)
-    double comprehensivePremium = baseMonthlyPremium;
-    monthlyPremiums['Comprehensive'] = comprehensivePremium;
-    
-    // Smart Plan (Balanced coverage - 25% cheaper than comprehensive)
-    double smartPremium = baseMonthlyPremium * 0.75;
-    monthlyPremiums['Smart'] = smartPremium;
-    
-    // Third-Party Plan (Basic coverage - 50% cheaper than comprehensive)
-    double thirdPartyPremium = baseMonthlyPremium * 0.5;
-    monthlyPremiums['Third-Party'] = thirdPartyPremium;
-    
-    // Ensure minimum realistic premiums for SA market
-    monthlyPremiums.updateAll((key, value) {
-      return value < 200 ? 200 : value; // Minimum R200 per month
-    });
-    
-    return monthlyPremiums;
+    return null;
   }
 
   void _nextStep() {
+    final validationError = _validateInputs();
+    if (validationError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(validationError),
+          backgroundColor: Colors.redAccent,
+        )
+      );
+      return;
+    }
+    
     if (_currentStep < 3) {
       _progressController.reset();
       setState(() => _currentStep++);
@@ -248,9 +371,10 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
     }
   }
 
-  void _showQuoteResults() {
-    final monthlyPremiums = _calculateQuote();
-    
+  void _showQuoteResults() async {
+    final monthlyPremiums = await _calculateQuote();
+    if (monthlyPremiums == null) return;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -259,7 +383,7 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
     );
   }
 
-  Widget _buildQuoteResults(Map<String, double> monthlyPremiums) {
+  Widget _buildQuoteResults(Map<String, dynamic> monthlyPremiums) {
     return Container(
       margin: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -280,19 +404,85 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
       ),
       child: Padding(
         padding: const EdgeInsets.all(25),
-        child: SingleChildScrollView( // Added SingleChildScrollView to fix overflow
+        child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                "🎉 Your Quote is Ready!",
-                style: GoogleFonts.poppins(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
+              // Header with close button
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    "🎉 Your Quote is Ready!",
+                    style: GoogleFonts.poppins(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                  Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      onTap: () => Navigator.pop(context),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white.withOpacity(0.2)),
+                        ),
+                        child: Icon(Icons.close, color: Colors.white70, size: 18),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              
+              // Debug Info Section
+              const SizedBox(height: 15),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white.withOpacity(0.1)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Calculation Details:",
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Vehicle: ${_brandController.text} ${_modelController.text}",
+                      style: GoogleFonts.poppins(color: Colors.white70, fontSize: 11),
+                    ),
+                    Text(
+                      "Value: R${_valueController.text} | Location: ${_provinceController.text}, ${_placeController.text}",
+                      style: GoogleFonts.poppins(color: Colors.white70, fontSize: 11),
+                    ),
+                    Text(
+                      "Driver: ${_ageController.text}yrs | Claims: ${_claimsHistoryController.text}",
+                      style: GoogleFonts.poppins(color: Colors.white70, fontSize: 11),
+                    ),
+                    Text(
+                      "Security: ${_parking} ${_hasTracker ? '+Tracker' : ''} ${_hasAlarm ? '+Alarm' : ''}",
+                      style: GoogleFonts.poppins(color: Colors.white70, fontSize: 11),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 10),
+
+              const SizedBox(height: 15),
               Text(
                 "Monthly Premium Options",
                 style: GoogleFonts.poppins(
@@ -301,31 +491,29 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
                 ),
               ),
               const SizedBox(height: 20),
-              
               _buildPlanCard(
-                "Comprehensive Plan", 
-                Colors.blueAccent, 
-                "Full Protection", 
-                "R ${monthlyPremiums['Comprehensive']?.toStringAsFixed(0) ?? '0'}/month",
-                "Covers accidents, theft, fire, third-party, and natural disasters"
+                "Comprehensive Plan",
+                Colors.blueAccent,
+                "Full Protection",
+                "R ${monthlyPremiums['comprehensive']?.toStringAsFixed(0) ?? '0'}/month",
+                "Covers accidents, theft, fire, third-party, and natural disasters",
               ),
               const SizedBox(height: 12),
               _buildPlanCard(
-                "Smart Plan", 
-                Colors.greenAccent, 
-                "Best Value", 
-                "R ${monthlyPremiums['Smart']?.toStringAsFixed(0) ?? '0'}/month",
-                "Balanced coverage with essential protection"
+                "Smart Plan",
+                Colors.greenAccent,
+                "Best Value",
+                "R ${monthlyPremiums['smart']?.toStringAsFixed(0) ?? '0'}/month",
+                "Balanced coverage with essential protection",
               ),
               const SizedBox(height: 12),
               _buildPlanCard(
-                "Third-Party Plan", 
-                Colors.orangeAccent, 
-                "Essential", 
-                "R ${monthlyPremiums['Third-Party']?.toStringAsFixed(0) ?? '0'}/month",
-                "Covers damage to other vehicles and property only"
+                "Third-Party Plan",
+                Colors.orangeAccent,
+                "Essential",
+                "R ${monthlyPremiums['third_party']?.toStringAsFixed(0) ?? '0'}/month",
+                "Covers damage to other vehicles and property only",
               ),
-              
               const SizedBox(height: 20),
               Container(
                 padding: const EdgeInsets.all(15),
@@ -350,23 +538,22 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
                   ],
                 ),
               ),
-              
               const SizedBox(height: 25),
               Row(
                 children: [
                   Expanded(
                     child: _buildActionButton(
-                      "Apply Now", 
-                      Colors.greenAccent, 
-                      () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ApplyInsuranceScreen()))
+                      "Apply Now",
+                      Colors.greenAccent,
+                      () => _navigateToApplyScreen(monthlyPremiums),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: _buildActionButton(
-                      "Save Quote", 
+                      "Save Quote",
                       Colors.blueAccent,
-                      () => Navigator.pop(context)
+                      () => _saveQuoteLocally(monthlyPremiums),
                     ),
                   ),
                 ],
@@ -452,14 +639,17 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
 
   @override
   void dispose() {
-    _makeModelController.dispose();
+    _brandController.dispose();
+    _modelController.dispose();
+    _provinceController.dispose();
+    _placeController.dispose();
     _yearController.dispose();
-    _regNumberController.dispose();
     _mileageController.dispose();
     _valueController.dispose();
     _ageController.dispose();
     _claimsHistoryController.dispose();
-    
+    _regNumberController.dispose();
+    _colorController.dispose();
     _masterController.dispose();
     _progressController.dispose();
     super.dispose();
@@ -469,47 +659,95 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color.fromARGB(255, 8, 18, 32),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(25.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const SizedBox(height: 120),
-            _buildFloatingHeader(),
-            const SizedBox(height: 30),
-            FadeTransition(
-              opacity: _fadeAnimation,
-              child: ScaleTransition(
-                scale: _scaleAnimation,
-                child: _buildProgressHeader(),
+      body: Stack(
+        children: [
+          // Background
+          Container(
+            decoration: const BoxDecoration(
+              gradient: RadialGradient(
+                center: Alignment.topLeft,
+                radius: 1.5,
+                colors: [
+                  Color.fromARGB(255, 16, 52, 90),
+                  Color.fromARGB(255, 8, 25, 45),
+                  Color.fromARGB(255, 4, 15, 26),
+                ],
               ),
             ),
-            const SizedBox(height: 30),
-            FadeTransition(
-              opacity: _fadeAnimation,
-              child: ScaleTransition(
-                scale: _scaleAnimation,
-                child: _buildCurrentStepContent(),
-              ),
+          ),
+          
+          // Main Content
+          SingleChildScrollView(
+            padding: const EdgeInsets.all(25.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const SizedBox(height: 60),
+                
+                // Header with Exit Button
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildFloatingHeader(),
+                    ),
+                    const SizedBox(width: 10),
+                    // Exit Button
+                    Material(
+                      color: Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        onTap: () => Navigator.pop(context),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white.withOpacity(0.2)),
+                          ),
+                          child: Icon(Icons.close, color: Colors.white70, size: 20),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 30),
+                FadeTransition(
+                  opacity: _fadeAnimation,
+                  child: ScaleTransition(
+                    scale: _scaleAnimation,
+                    child: _buildProgressHeader(),
+                  ),
+                ),
+                const SizedBox(height: 30),
+                FadeTransition(
+                  opacity: _fadeAnimation,
+                  child: ScaleTransition(
+                    scale: _scaleAnimation,
+                    child: _buildCurrentStepContent(),
+                  ),
+                ),
+                const SizedBox(height: 40),
+                FadeTransition(
+                  opacity: _fadeAnimation,
+                  child: ScaleTransition(
+                    scale: _scaleAnimation,
+                    child: _buildNavigationButtons(),
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
             ),
-            const SizedBox(height: 40),
-            FadeTransition(
-              opacity: _fadeAnimation,
-              child: ScaleTransition(
-                scale: _scaleAnimation,
-                child: _buildNavigationButtons(),
-              ),
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildFloatingHeader() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -540,12 +778,22 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
             ),
           ),
           const SizedBox(height: 5),
-          Text(
-            "Complete the form below to get your personalized insurance options",
-            style: GoogleFonts.poppins(
-              fontSize: 14,
-              color: Colors.white70,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  "Complete the form below to get your personalized insurance options",
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    color: Colors.white70,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.info_outline, color: Colors.white70),
+                onPressed: _showDirectory,
+              ),
+            ],
           ),
         ],
       ),
@@ -560,7 +808,7 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
           children: List.generate(4, (index) {
             final isActive = index == _currentStep;
             final isCompleted = index < _currentStep;
-            
+
             return Expanded(
               child: Column(
                 children: [
@@ -579,7 +827,6 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
             );
           }),
         ),
-        
         Container(
           height: 6,
           decoration: BoxDecoration(
@@ -599,7 +846,6 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
                       borderRadius: BorderRadius.circular(3),
                     ),
                   ),
-                  
                   Container(
                     width: (MediaQuery.of(context).size.width - 50) * ((_currentStep + _progressAnimation.value) / 4),
                     height: double.infinity,
@@ -613,7 +859,6 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
                       borderRadius: BorderRadius.circular(3),
                     ),
                   ),
-                  
                   Positioned(
                     left: 0,
                     right: 0,
@@ -674,37 +919,180 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
     }
   }
 
-  Widget _buildVehicleDetails() {
-    return Column(
-      children: [
-        _buildDropdownField(
-          "Car Make", 
-          _selectedMake, 
-          _saCarMakes, 
-          (value) => setState(() {
-            _selectedMake = value ?? '';
-            _selectedModel = ''; // Reset model when make changes
-          })
+Widget _buildVehicleDetails() {
+  return Column(
+    children: [
+      _buildTextField("Brand", _brandController, TextInputType.text, hint: "e.g. Volkswagen, BMW"),
+      const SizedBox(height: 15),
+      _buildTextField("Model", _modelController, TextInputType.text, hint: "e.g. Golf GTI, M3"),
+      const SizedBox(height: 15),
+      _buildTextField("Registration Number", _regNumberController, TextInputType.text, hint: "e.g. GP123456"),
+      const SizedBox(height: 15),
+      _buildTextField("Color", _colorController, TextInputType.text, hint: "e.g. White, Black"),
+      const SizedBox(height: 15),
+      _buildTextField("Year of Manufacture", _yearController, TextInputType.number, hint: "e.g. 2020"),
+      const SizedBox(height: 15),
+      _buildTextField("Current Mileage (km)", _mileageController, TextInputType.number, hint: "e.g. 15000"),
+      const SizedBox(height: 15),
+      _buildTextField("Vehicle Value", _valueController, TextInputType.number, hint: "e.g. 500000"),
+    ],
+  );
+}
+
+Widget _buildTextField(String label, TextEditingController controller, TextInputType keyboardType, {String hint = ""}) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: GoogleFonts.poppins(
+          color: Colors.white70,
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
         ),
-        const SizedBox(height: 15),
-        if (_selectedMake.isNotEmpty)
-          _buildDropdownField(
-            "Car Model", 
-            _selectedModel, 
-            _saCarModels[_selectedMake] ?? [], 
-            (value) => setState(() => _selectedModel = value ?? '')
+      ),
+      const SizedBox(height: 8),
+      Container(
+        height: 55,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white.withOpacity(0.1),
+              Colors.white.withOpacity(0.05),
+            ],
           ),
-        if (_selectedMake.isNotEmpty) const SizedBox(height: 15),
-        _buildTextField("Year of Manufacture", _yearController, TextInputType.number),
-        const SizedBox(height: 15),
-        _buildTextField("Registration Number", _regNumberController, TextInputType.text),
-        const SizedBox(height: 15),
-        _buildTextField("Current Mileage (km)", _mileageController, TextInputType.number),
-        const SizedBox(height: 15),
-        _buildTextField("Vehicle Value (R)", _valueController, TextInputType.number),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withOpacity(0.2)),
+        ),
+        child: TextField(
+          controller: controller,
+          keyboardType: keyboardType,
+          style: GoogleFonts.poppins(color: Colors.white, fontSize: 14),
+          decoration: InputDecoration(
+            hintText: hint.isNotEmpty ? hint : "Enter $label",
+            hintStyle: GoogleFonts.poppins(color: Colors.white54, fontSize: 14),
+            border: InputBorder.none,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+Widget _buildTextFieldWithRecommendations(
+  String label, 
+  TextEditingController controller, 
+  TextInputType keyboardType, {
+  required List<String> recommendations,
+  String hint = "",
+}) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: GoogleFonts.poppins(
+          color: Colors.white70,
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const SizedBox(height: 8),
+      Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white.withOpacity(0.1),
+              Colors.white.withOpacity(0.05),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withOpacity(0.2)),
+        ),
+        child: Column(
+          children: [
+            TextField(
+              controller: controller,
+              keyboardType: keyboardType,
+              style: GoogleFonts.poppins(color: Colors.white, fontSize: 14),
+              decoration: InputDecoration(
+                hintText: hint.isNotEmpty ? hint : "Enter $label",
+                hintStyle: GoogleFonts.poppins(color: Colors.white54, fontSize: 14),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              ),
+            ),
+            if (recommendations.isNotEmpty)
+              _buildRecommendationChips(controller, recommendations),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
+Widget _buildRecommendationChips(TextEditingController controller, List<String> recommendations) {
+  return Container(
+    padding: const EdgeInsets.all(8),
+    decoration: BoxDecoration(
+      color: Colors.black.withOpacity(0.3),
+      borderRadius: const BorderRadius.only(
+        bottomLeft: Radius.circular(12),
+        bottomRight: Radius.circular(12),
+      ),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "Suggestions:",
+          style: GoogleFonts.poppins(
+            color: Colors.white54,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: recommendations.take(5).map((recommendation) {
+            return Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(15),
+              child: InkWell(
+                onTap: () {
+                  controller.text = recommendation;
+                },
+                borderRadius: BorderRadius.circular(15),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.blueAccent.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(15),
+                    border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
+                  ),
+                  child: Text(
+                    recommendation,
+                    style: GoogleFonts.poppins(
+                      color: Colors.blueAccent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
       ],
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildDriverDetails() {
     return Column(
@@ -722,33 +1110,26 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
     return Column(
       children: [
         _buildDropdownField(
-          "Coverage Type", 
-          _coverageType, 
-          ['Comprehensive', 'Third-Party', 'Smart Plan'], 
-          (value) => setState(() => _coverageType = value ?? 'Comprehensive')
+          "Coverage Type",
+          _coverageType,
+          ['Comprehensive', 'Smart', 'Third-Party'],
+          (value) => setState(() => _coverageType = value ?? 'Comprehensive'),
         ),
         const SizedBox(height: 15),
         _buildDropdownField(
-          "Vehicle Color", 
-          _color, 
-          _saColors, 
-          (value) => setState(() => _color = value ?? '')
+          "Parking Location",
+          _parking,
+          ['Garage', 'Street', 'Carport'],
+          (value) => setState(() => _parking = value ?? 'Garage'),
         ),
         const SizedBox(height: 15),
-        _buildDropdownField(
-          "Parking Location", 
-          _parking, 
-          ['Street', 'Garage', 'Secured Lot'], 
-          (value) => setState(() => _parking = value ?? 'Street')
-        ),
-        const SizedBox(height: 15),
-        _buildCheckboxOption("Drive during peak hours (18:00-21:00)", _peakHours, (value) => setState(() => _peakHours = value ?? false)),
-        const SizedBox(height: 10),
         _buildCheckboxOption("GPS Tracker installed", _hasTracker, (value) => setState(() => _hasTracker = value ?? false)),
         const SizedBox(height: 10),
         _buildCheckboxOption("Alarm system installed", _hasAlarm, (value) => setState(() => _hasAlarm = value ?? false)),
         const SizedBox(height: 10),
         _buildCheckboxOption("Immobilizer installed", _hasImmobilizer, (value) => setState(() => _hasImmobilizer = value ?? false)),
+        const SizedBox(height: 10),
+        _buildCheckboxOption("Drive during peak hours (18:00-21:00)", _peakHours, (value) => setState(() => _peakHours = value ?? false)),
       ],
     );
   }
@@ -756,54 +1137,15 @@ class _GetQuoteScreenState extends State<GetQuoteScreen> with TickerProviderStat
   Widget _buildLocationDetails() {
     return Column(
       children: [
-        _buildDropdownField(
-          "Location Area", 
-          _location, 
-          _saAreas, 
-          (value) => setState(() => _location = value ?? '')
-        ),
+        _buildTextField("Province ", _provinceController, TextInputType.text),
+        const SizedBox(height: 15),
+        _buildTextField("Place/Suburb", _placeController, TextInputType.text),
         const SizedBox(height: 15),
         _buildDropdownField(
-          "Vehicle Usage", 
-          _usage, 
-          ['Daily Commute', 'Business Use', 'Occasional', 'Weekends Only'], 
-          (value) => setState(() => _usage = value ?? 'Daily Commute')
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTextField(String label, TextEditingController controller, TextInputType keyboardType) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: GoogleFonts.poppins(
-            color: Colors.white70,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          height: 50,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white.withOpacity(0.2)),
-          ),
-          child: TextField(
-            controller: controller,
-            keyboardType: keyboardType,
-            style: GoogleFonts.poppins(color: Colors.white),
-            decoration: InputDecoration(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 15),
-              border: InputBorder.none,
-              hintText: "Enter $label",
-              hintStyle: GoogleFonts.poppins(color: Colors.white54),
-            ),
-          ),
+          "Vehicle Usage",
+          _usage,
+          ['Daily Commute', 'Business','Occasional'],
+          (value) => setState(() => _usage = value ?? 'Daily Commute'),
         ),
       ],
     );

@@ -1,8 +1,8 @@
+import 'package:autosure_app/screens/login_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'login_screen.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -13,9 +13,7 @@ class AdminDashboard extends StatefulWidget {
 
 class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStateMixin {
   late AnimationController _masterController;
-  late AnimationController _gridController;
   late Animation<double> _fadeAnimation;
-  late Animation<Offset> _slideAnimation;
   
   int _selectedTab = 0;
   final ScrollController _scrollController = ScrollController();
@@ -25,6 +23,7 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
   final DatabaseReference _policiesRef = FirebaseDatabase.instance.ref('policies');
   final DatabaseReference _claimsRef = FirebaseDatabase.instance.ref('claims');
   final DatabaseReference _applicationsRef = FirebaseDatabase.instance.ref('insurance_applications');
+  final DatabaseReference _notificationsRef = FirebaseDatabase.instance.ref('notifications');
   
   // Live data from Firebase
   List<Map<String, dynamic>> _users = [];
@@ -36,8 +35,7 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
     'activePolicies': 0,
     'pendingClaims': 0,
     'totalRevenue': 0,
-    'averageRiskScore': 0,
-    'satisfactionRate': 0,
+    'pendingApplications': 0,
   };
 
   @override
@@ -49,11 +47,6 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
       duration: const Duration(milliseconds: 1000),
     );
     
-    _gridController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    );
-    
     _fadeAnimation = Tween<double>(
       begin: 0.0,
       end: 1.0,
@@ -62,18 +55,7 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
       curve: Curves.easeInOut,
     ));
     
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0.0, 0.2),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _masterController,
-      curve: Curves.easeOutBack,
-    ));
-    
     _masterController.forward();
-    Future.delayed(const Duration(milliseconds: 300), () {
-      _gridController.forward();
-    });
 
     // Load initial data from Firebase
     _loadDashboardData();
@@ -87,10 +69,35 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
     _loadStats();
   }
 
+  List<Map<String, dynamic>> _convertFirebaseDataToList(Map<dynamic, dynamic> data) {
+    try {
+      return data.entries.map((entry) {
+        final key = entry.key?.toString() ?? 'unknown';
+        final value = entry.value;
+        
+        Map<String, dynamic> itemData = {};
+        
+        if (value is Map<dynamic, dynamic>) {
+          itemData = value.map((key, value) => MapEntry(key?.toString() ?? 'unknown', value));
+        } else if (value is Map<String, dynamic>) {
+          itemData = value;
+        }
+        
+        return {
+          'id': key,
+          ...itemData,
+        };
+      }).toList();
+    } catch (e) {
+      print('Error converting Firebase data: $e');
+      return [];
+    }
+  }
+
   void _loadUsers() {
     _usersRef.onValue.listen((event) {
       final data = event.snapshot.value;
-      if (data != null && data is Map) {
+      if (data != null && data is Map<dynamic, dynamic>) {
         setState(() {
           _users = _convertFirebaseDataToList(data);
         });
@@ -101,7 +108,7 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
   void _loadPolicies() {
     _policiesRef.onValue.listen((event) {
       final data = event.snapshot.value;
-      if (data != null && data is Map) {
+      if (data != null && data is Map<dynamic, dynamic>) {
         setState(() {
           _policies = _convertFirebaseDataToList(data);
         });
@@ -112,10 +119,10 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
   void _loadClaims() {
     _claimsRef.onValue.listen((event) {
       final data = event.snapshot.value;
-      if (data != null && data is Map) {
+      if (data != null && data is Map<dynamic, dynamic>) {
         setState(() {
           _claims = _convertFirebaseDataToList(data);
-      });
+        });
       }
     });
   }
@@ -123,7 +130,7 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
   void _loadApplications() {
     _applicationsRef.onValue.listen((event) {
       final data = event.snapshot.value;
-      if (data != null && data is Map) {
+      if (data != null && data is Map<dynamic, dynamic>) {
         setState(() {
           _applications = _convertFirebaseDataToList(data);
         });
@@ -132,37 +139,28 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
   }
 
   void _loadStats() {
-    // Calculate stats from live data
     _usersRef.onValue.listen((usersEvent) {
       _policiesRef.onValue.listen((policiesEvent) {
         _claimsRef.onValue.listen((claimsEvent) {
-          setState(() {
-            final users = usersEvent.snapshot.value as Map? ?? {};
-            final policies = policiesEvent.snapshot.value as Map? ?? {};
-            final claims = claimsEvent.snapshot.value as Map? ?? {};
-            
-            _stats = {
-              'totalUsers': users.length,
-              'activePolicies': policies.values.where((policy) => policy['status'] == 'Active').length,
-              'pendingClaims': claims.values.where((claim) => claim['status'] == 'Pending').length,
-              'totalRevenue': _calculateTotalRevenue(policies),
-              'averageRiskScore': _calculateAverageRiskScore(users),
-              'satisfactionRate': _calculateSatisfactionRate(claims),
-            };
+          _applicationsRef.onValue.listen((applicationsEvent) {
+            setState(() {
+              final users = usersEvent.snapshot.value as Map? ?? {};
+              final policies = policiesEvent.snapshot.value as Map? ?? {};
+              final claims = claimsEvent.snapshot.value as Map? ?? {};
+              final applications = applicationsEvent.snapshot.value as Map? ?? {};
+              
+              _stats = {
+                'totalUsers': users.length,
+                'activePolicies': policies.values.where((policy) => policy['status'] == 'approved' || policy['status'] == 'Active').length,
+                'pendingClaims': claims.values.where((claim) => claim['status'] == 'Pending').length,
+                'totalRevenue': _calculateTotalRevenue(policies),
+                'pendingApplications': applications.values.where((app) => app['status'] == 'submitted').length,
+              };
+            });
           });
         });
       });
     });
-  }
-
-  List<Map<String, dynamic>> _convertFirebaseDataToList(Map data) {
-    return data.entries.map((entry) {
-      final itemData = Map<String, dynamic>.from(entry.value as Map);
-      return {
-        'id': entry.key,
-        ...itemData,
-      };
-    }).toList();
   }
 
   double _calculateTotalRevenue(Map policies) {
@@ -176,30 +174,9 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
     return total;
   }
 
-  double _calculateAverageRiskScore(Map users) {
-    if (users.isEmpty) return 0;
-    double total = 0;
-    int count = 0;
-    users.forEach((key, value) {
-      if (value is Map && value['riskScore'] != null) {
-        total += (value['riskScore'] as num).toDouble();
-        count++;
-      }
-    });
-    return count > 0 ? total / count : 0;
-  }
-
-  double _calculateSatisfactionRate(Map claims) {
-    if (claims.isEmpty) return 0;
-    final approvedClaims = claims.values.where((claim) => claim['status'] == 'Approved').length;
-    final totalProcessedClaims = claims.values.where((claim) => claim['status'] != 'Pending').length;
-    return totalProcessedClaims > 0 ? (approvedClaims / totalProcessedClaims) * 100 : 0;
-  }
-
   @override
   void dispose() {
     _masterController.dispose();
-    _gridController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -211,17 +188,7 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
       if (mounted) {
         Navigator.pushAndRemoveUntil(
           context,
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) => const LoginScreen(),
-            transitionsBuilder: (context, animation, secondaryAnimation, child) {
-              const begin = Offset(0.0, -1.0);
-              const end = Offset.zero;
-              const curve = Curves.easeInOutQuart;
-              var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-              return SlideTransition(position: animation.drive(tween), child: child);
-            },
-            transitionDuration: const Duration(milliseconds: 800),
-          ),
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
           (route) => false,
         );
       }
@@ -235,7 +202,7 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color.fromARGB(255, 16, 52, 90),
+        backgroundColor: const Color(0xFF1E2A3B),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: Colors.white.withOpacity(0.2)),
@@ -277,7 +244,7 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color.fromARGB(255, 16, 52, 90),
+        backgroundColor: const Color(0xFF1E2A3B),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: Colors.white.withOpacity(0.2)),
@@ -335,72 +302,525 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
   }
 
   // Admin management functions
-  void _approveApplication(String applicationId) {
-    _applicationsRef.child(applicationId).update({
-      'status': 'Approved',
-      'approvedAt': ServerValue.timestamp,
-      'approvedBy': FirebaseAuth.instance.currentUser?.uid,
-    });
+  void _approveApplication(Map<String, dynamic> application) async {
+    try {
+      final applicationId = application['id'];
+      final user = FirebaseAuth.instance.currentUser;
+      
+      await _applicationsRef.child(applicationId).update({
+        'status': 'approved',
+        'approvedAt': DateTime.now().millisecondsSinceEpoch,
+        'approvedBy': user?.uid,
+      });
+
+      final policyId = _policiesRef.push().key;
+      final quoteData = _safeCastMap(application['quoteData']);
+      final personalInfo = _safeCastMap(application['personalInfo']);
+      
+      final newPolicy = {
+        'id': policyId,
+        'userId': application['userId'],
+        'userEmail': application['userEmail'],
+        'policyNumber': 'POL-${DateTime.now().millisecondsSinceEpoch}',
+        'policyType': quoteData['coverageType'] ?? 'Comprehensive',
+        'premiumAmount': quoteData['premiums']?['comprehensive'] ?? 0,
+        'vehicleModel': '${quoteData['brand']} ${quoteData['model']}',
+        'vehicleYear': quoteData['year'],
+        'coverDuration': personalInfo['coverDuration'] ?? '12 Months',
+        'status': 'approved',
+        'startDate': DateTime.now().millisecondsSinceEpoch,
+        'endDate': DateTime.now().add(const Duration(days: 365)).millisecondsSinceEpoch,
+        'createdAt': DateTime.now().millisecondsSinceEpoch,
+        'createdBy': user?.uid,
+        'applicationId': applicationId,
+      };
+
+      await _policiesRef.child(policyId!).set(newPolicy);
+      
+      _showSuccessSnackbar('Application approved and policy created successfully!');
+    } catch (e) {
+      _showErrorSnackbar('Failed to approve application: ${e.toString()}');
+    }
   }
 
-  void _rejectApplication(String applicationId) {
-    _applicationsRef.child(applicationId).update({
-      'status': 'Rejected',
-      'rejectedAt': ServerValue.timestamp,
-      'rejectedBy': FirebaseAuth.instance.currentUser?.uid,
-    });
+  void _rejectApplication(String applicationId, Map<String, dynamic> application) async {
+    final TextEditingController reasonController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E2A3B),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: Colors.redAccent.withOpacity(0.3)),
+            ),
+            title: Row(
+              children: [
+                Icon(Icons.warning, color: Colors.redAccent, size: 24),
+                const SizedBox(width: 12),
+                Text(
+                  'Reject Application',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Please provide a reason for rejection:',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white70,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white.withOpacity(0.1)),
+                  ),
+                  child: TextField(
+                    controller: reasonController,
+                    maxLines: 4,
+                    style: GoogleFonts.poppins(color: Colors.white),
+                    decoration: const InputDecoration(
+                      hintText: 'Enter rejection reason...',
+                      hintStyle: TextStyle(color: Colors.white54),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.all(16),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This reason will be sent to the user.',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white54,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.1),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  'Cancel',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white70,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () async {
+                  if (reasonController.text.trim().isEmpty) {
+                    _showErrorSnackbar('Please provide a rejection reason');
+                    return;
+                  }
+                  
+                  try {
+                    final user = FirebaseAuth.instance.currentUser;
+                    
+                    // Update application status
+                    await _applicationsRef.child(applicationId).update({
+                      'status': 'rejected',
+                      'rejectedAt': DateTime.now().millisecondsSinceEpoch,
+                      'rejectedBy': user?.uid,
+                      'rejectionReason': reasonController.text.trim(),
+                    });
+
+                    // Create notification for user
+                    final notificationId = _notificationsRef.push().key;
+                    final notification = {
+                      'id': notificationId,
+                      'userId': application['userId'],
+                      'type': 'application_rejected',
+                      'title': 'Application Rejected',
+                      'message': 'Your insurance application has been rejected.',
+                      'reason': reasonController.text.trim(),
+                      'applicationId': applicationId,
+                      'timestamp': DateTime.now().millisecondsSinceEpoch,
+                      'read': false,
+                    };
+
+                    await _notificationsRef.child(notificationId!).set(notification);
+                    
+                    Navigator.pop(context);
+                    _showSuccessSnackbar('Application rejected with reason sent to user!');
+                  } catch (e) {
+                    _showErrorSnackbar('Failed to reject application: ${e.toString()}');
+                  }
+                },
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.redAccent.withOpacity(0.1),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  'Reject with Reason',
+                  style: GoogleFonts.poppins(
+                    color: Colors.redAccent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
-  void _updateUserStatus(String userId, String status) {
+  void _suspendUser(String userId) {
     _usersRef.child(userId).update({
-      'status': status,
-      'updatedAt': ServerValue.timestamp,
+      'status': 'suspended',
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
     });
+    _showSuccessSnackbar('User suspended successfully!');
   }
 
-  void _processClaim(String claimId, String status) {
+  void _activateUser(String userId) {
+    _usersRef.child(userId).update({
+      'status': 'active',
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    });
+    _showSuccessSnackbar('User activated successfully!');
+  }
+
+  void _deleteUser(String userId) async {
+    try {
+      await _usersRef.child(userId).remove();
+      _showSuccessSnackbar('User deleted successfully!');
+    } catch (e) {
+      _showErrorSnackbar('Failed to delete user: ${e.toString()}');
+    }
+  }
+
+  void _approveClaim(String claimId) {
     _claimsRef.child(claimId).update({
-      'status': status,
-      'processedAt': ServerValue.timestamp,
+      'status': 'Approved',
+      'processedAt': DateTime.now().millisecondsSinceEpoch,
       'processedBy': FirebaseAuth.instance.currentUser?.uid,
     });
+    _showSuccessSnackbar('Claim approved successfully!');
+  }
+
+  void _rejectClaim(String claimId, Map<String, dynamic> claim) async {
+    final TextEditingController reasonController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E2A3B),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: Colors.redAccent.withOpacity(0.3)),
+            ),
+            title: Row(
+              children: [
+                Icon(Icons.warning, color: Colors.redAccent, size: 24),
+                const SizedBox(width: 12),
+                Text(
+                  'Reject Claim',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Please provide a reason for rejection:',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white70,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white.withOpacity(0.1)),
+                  ),
+                  child: TextField(
+                    controller: reasonController,
+                    maxLines: 4,
+                    style: GoogleFonts.poppins(color: Colors.white),
+                    decoration: const InputDecoration(
+                      hintText: 'Enter rejection reason...',
+                      hintStyle: TextStyle(color: Colors.white54),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.all(16),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This reason will be sent to the user.',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white54,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.1),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  'Cancel',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white70,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () async {
+                  if (reasonController.text.trim().isEmpty) {
+                    _showErrorSnackbar('Please provide a rejection reason');
+                    return;
+                  }
+                  
+                  try {
+                    final user = FirebaseAuth.instance.currentUser;
+                    
+                    // Update claim status
+                    await _claimsRef.child(claimId).update({
+                      'status': 'Rejected',
+                      'processedAt': DateTime.now().millisecondsSinceEpoch,
+                      'processedBy': user?.uid,
+                      'rejectionReason': reasonController.text.trim(),
+                    });
+
+                    // Create notification for user
+                    final notificationId = _notificationsRef.push().key;
+                    final notification = {
+                      'id': notificationId,
+                      'userId': claim['userId'],
+                      'type': 'claim_rejected',
+                      'title': 'Claim Rejected',
+                      'message': 'Your insurance claim has been rejected.',
+                      'reason': reasonController.text.trim(),
+                      'claimId': claimId,
+                      'timestamp': DateTime.now().millisecondsSinceEpoch,
+                      'read': false,
+                    };
+
+                    await _notificationsRef.child(notificationId!).set(notification);
+                    
+                    Navigator.pop(context);
+                    _showSuccessSnackbar('Claim rejected with reason sent to user!');
+                  } catch (e) {
+                    _showErrorSnackbar('Failed to reject claim: ${e.toString()}');
+                  }
+                },
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.redAccent.withOpacity(0.1),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  'Reject with Reason',
+                  style: GoogleFonts.poppins(
+                    color: Colors.redAccent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Map<String, dynamic> _safeCastMap(dynamic data) {
+    if (data is Map<dynamic, dynamic>) {
+      return data.map((key, value) => MapEntry(key?.toString() ?? '', value));
+    } else if (data is Map<String, dynamic>) {
+      return data;
+    }
+    return <String, dynamic>{};
+  }
+
+  String _getUserDisplayName(Map<String, dynamic> user) {
+    final personalInfo = _safeCastMap(user['personalInfo']);
+    if (personalInfo.isNotEmpty) {
+      final firstName = personalInfo['firstName']?.toString() ?? '';
+      final lastName = personalInfo['lastName']?.toString() ?? '';
+      
+      if (firstName.isNotEmpty && lastName.isNotEmpty) {
+        return '$firstName $lastName';
+      } else if (firstName.isNotEmpty) {
+        return firstName;
+      } else if (lastName.isNotEmpty) {
+        return lastName;
+      }
+    }
+    
+    final directFirstName = user['firstName']?.toString() ?? '';
+    final directLastName = user['lastName']?.toString() ?? '';
+    
+    if (directFirstName.isNotEmpty && directLastName.isNotEmpty) {
+      return '$directFirstName $directLastName';
+    } else if (directFirstName.isNotEmpty) {
+      return directFirstName;
+    } else if (directLastName.isNotEmpty) {
+      return directLastName;
+    }
+    
+    final email = user['email']?.toString() ?? '';
+    if (email.isNotEmpty) {
+      final emailUsername = email.split('@').first;
+      return emailUsername[0].toUpperCase() + emailUsername.substring(1);
+    }
+    
+    return 'Unknown User';
+  }
+
+  String _getUserNameById(String userId) {
+    final user = _users.firstWhere((user) => user['id'] == userId, orElse: () => <String, dynamic>{});
+    return _getUserDisplayName(user);
+  }
+
+  void _showSuccessSnackbar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _showErrorSnackbar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  String _formatCurrency(double amount) {
+    return amount.toStringAsFixed(2);
+  }
+
+  String _formatDate(dynamic date) {
+    if (date == null) return 'N/A';
+    try {
+      final timestamp = int.tryParse(date.toString());
+      if (timestamp != null) {
+        final dateTime = DateTime.fromMillisecondsSinceEpoch(timestamp);
+        return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+      }
+      return date.toString();
+    } catch (e) {
+      return date.toString();
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'active':
+      case 'approved':
+        return Colors.greenAccent;
+      case 'suspended':
+      case 'pending':
+        return Colors.orangeAccent;
+      case 'rejected':
+        return Colors.redAccent;
+      default:
+        return Colors.white70;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color.fromARGB(255, 10, 20, 35),
-      body: Row(
-        children: [
-          // Sidebar
-          _buildSidebar(),
-          
-          // Main Content
-          Expanded(
-            child: CustomScrollView(
-              controller: _scrollController,
-              slivers: [
-                // App Bar
-                _buildAppBar(),
-                
-                // Stats Overview
-                _buildStatsOverview(),
-                
-                // Quick Actions
-                _buildQuickActions(),
-                
-                // Main Content based on selected tab
-                _buildMainContent(),
-                
-                // Bottom spacing
-                const SliverToBoxAdapter(
-                  child: SizedBox(height: 100),
+      backgroundColor: const Color(0xFF0F172A),
+      body: SafeArea(
+        child: Row(
+          children: [
+            // Sidebar
+            _buildSidebar(),
+            
+            // Main Content
+            Expanded(
+              child: Container(
+                margin: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E293B),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.3),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
                 ),
-              ],
+                child: _buildMainContentArea(),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildMainContentArea() {
+    return CustomScrollView(
+      controller: _scrollController,
+      slivers: [
+        // Stats Overview (Only for Dashboard)
+        if (_selectedTab == 0) _buildStatsOverview(),
+        
+        // Main Content based on selected tab
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: _getContentForTab(),
+          ),
+        ),
+        
+        // Bottom spacing
+        const SliverToBoxAdapter(
+          child: SizedBox(height: 40),
+        ),
+      ],
     );
   }
 
@@ -408,58 +828,57 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
     return Container(
       width: 280,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            const Color.fromARGB(255, 16, 52, 90),
-            const Color.fromARGB(255, 8, 26, 45),
-          ],
-        ),
-        border: Border(
-          right: BorderSide(color: Colors.white.withOpacity(0.1), width: 1),
-        ),
+        color: const Color(0xFF1E293B),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(4, 0),
+          ),
+        ],
       ),
       child: Column(
         children: [
           // Logo and Title
           Container(
-            padding: const EdgeInsets.all(30),
+            padding: const EdgeInsets.all(32),
             child: Column(
               children: [
                 Container(
-                  width: 60,
-                  height: 60,
+                  width: 70,
+                  height: 70,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: [Colors.blueAccent, Colors.lightBlue],
+                    gradient: const LinearGradient(
+                      colors: [Colors.blueAccent, Colors.lightBlueAccent],
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.blueAccent.withOpacity(0.5),
-                        blurRadius: 15,
+                        color: Colors.blueAccent.withOpacity(0.4),
+                        blurRadius: 20,
                         spreadRadius: 3,
                       ),
                     ],
                   ),
-                  child: const Icon(Icons.admin_panel_settings, color: Colors.white, size: 30),
+                  child: const Icon(Icons.admin_panel_settings, color: Colors.white, size: 35),
                 ),
-                const SizedBox(height: 15),
+                const SizedBox(height: 16),
                 Text(
                   'Admin Portal',
                   style: GoogleFonts.poppins(
                     color: Colors.white,
                     fontSize: 20,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
+                const SizedBox(height: 4),
                 Text(
                   'AutoSure Management',
                   style: GoogleFonts.poppins(
                     color: Colors.white70,
                     fontSize: 12,
                   ),
+                  textAlign: TextAlign.center,
                 ),
               ],
             ),
@@ -467,16 +886,20 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
           
           // Navigation Items
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                _buildNavItem(Icons.dashboard, 'Dashboard', 0),
-                _buildNavItem(Icons.people, 'User Management', 1),
-                _buildNavItem(Icons.description, 'Applications', 2),
-                _buildNavItem(Icons.policy, 'Policies', 3),
-                _buildNavItem(Icons.analytics, 'Claims', 4),
-                _buildNavItem(Icons.settings, 'System Settings', 5),
-              ],
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  children: [
+                    _buildNavItem(Icons.dashboard, 'Dashboard', 0),
+                    _buildNavItem(Icons.people, 'User Management', 1),
+                    _buildNavItem(Icons.description, 'Applications', 2),
+                    _buildNavItem(Icons.policy, 'Policies', 3),
+                    _buildNavItem(Icons.analytics, 'Claims', 4),
+                    _buildNavItem(Icons.bar_chart, 'Reports', 5),
+                  ],
+                ),
+              ),
             ),
           ),
           
@@ -491,15 +914,15 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
                 Row(
                   children: [
                     Container(
-                      width: 40,
-                      height: 40,
+                      width: 44,
+                      height: 44,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient: LinearGradient(
+                        gradient: const LinearGradient(
                           colors: [Colors.greenAccent, Colors.green],
                         ),
                       ),
-                      child: const Icon(Icons.person, color: Colors.white, size: 20),
+                      child: const Icon(Icons.person, color: Colors.white, size: 22),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -518,20 +941,15 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
                             'Super Administrator',
                             style: GoogleFonts.poppins(
                               color: Colors.white70,
-                              fontSize: 12,
+                              fontSize: 11,
                             ),
                           ),
                         ],
                       ),
                     ),
-                    IconButton(
-                      onPressed: _showLogoutConfirmation,
-                      icon: Icon(Icons.logout, color: Colors.white70, size: 20),
-                      tooltip: 'Logout',
-                    ),
                   ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 16),
                 Material(
                   color: Colors.transparent,
                   borderRadius: BorderRadius.circular(12),
@@ -540,22 +958,27 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
                     borderRadius: BorderRadius.circular(12),
                     child: Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       decoration: BoxDecoration(
-                        color: Colors.redAccent.withOpacity(0.1),
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.redAccent.withOpacity(0.2),
+                            Colors.redAccent.withOpacity(0.1),
+                          ],
+                        ),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.logout, color: Colors.redAccent, size: 16),
+                          const Icon(Icons.logout, color: Colors.redAccent, size: 16),
                           const SizedBox(width: 8),
                           Text(
                             'Logout',
                             style: GoogleFonts.poppins(
                               color: Colors.redAccent,
-                              fontSize: 14,
+                              fontSize: 13,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -575,291 +998,131 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
   Widget _buildNavItem(IconData icon, String title, int index) {
     final isSelected = _selectedTab == index;
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
         gradient: isSelected
             ? LinearGradient(
-                colors: [Colors.blueAccent.withOpacity(0.3), Colors.blueAccent.withOpacity(0.1)],
+                colors: [
+                  Colors.blueAccent.withOpacity(0.3),
+                  Colors.blueAccent.withOpacity(0.1),
+                ],
               )
             : null,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
+        border: isSelected ? Border.all(color: Colors.blueAccent.withOpacity(0.5)) : null,
       ),
       child: ListTile(
-        leading: Icon(icon, color: isSelected ? Colors.blueAccent : Colors.white70, size: 20),
+        leading: Icon(icon, 
+            color: isSelected ? Colors.blueAccent : Colors.white70, 
+            size: 20),
         title: Text(
           title,
           style: GoogleFonts.poppins(
             color: isSelected ? Colors.blueAccent : Colors.white70,
-            fontSize: 14,
-            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+            fontSize: 13,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
           ),
         ),
-        trailing: isSelected ? Icon(Icons.arrow_forward_ios, color: Colors.blueAccent, size: 14) : null,
+        trailing: isSelected ? const Icon(Icons.arrow_forward_ios, color: Colors.blueAccent, size: 12) : null,
         onTap: () => setState(() => _selectedTab = index),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        dense: true,
       ),
-    );
-  }
-
-  SliverAppBar _buildAppBar() {
-    return SliverAppBar(
-      expandedHeight: 120,
-      floating: false,
-      pinned: true,
-      backgroundColor: const Color.fromARGB(255, 16, 52, 90),
-      elevation: 0,
-      flexibleSpace: FlexibleSpaceBar(
-        background: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                const Color.fromARGB(255, 16, 52, 90),
-                const Color.fromARGB(255, 8, 26, 45),
-              ],
-            ),
-          ),
-        ),
-        title: SlideTransition(
-          position: _slideAnimation,
-          child: FadeTransition(
-            opacity: _fadeAnimation,
-            child: Text(
-              _getTitle(),
-              style: GoogleFonts.poppins(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-        centerTitle: false,
-        titlePadding: const EdgeInsets.only(left: 30, bottom: 16),
-      ),
-      actions: [
-        _buildSearchBar(),
-        _buildNotificationButton(),
-        _buildQuickActionButton(),
-        IconButton(
-          onPressed: _showLogoutConfirmation,
-          icon: Icon(Icons.logout, color: Colors.white70),
-          tooltip: 'Logout',
-        ),
-        const SizedBox(width: 20),
-      ],
-    );
-  }
-
-  Widget _buildSearchBar() {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      width: 300,
-      child: TextField(
-        decoration: InputDecoration(
-          hintText: 'Search users, policies, claims...',
-          hintStyle: GoogleFonts.poppins(color: Colors.white70),
-          prefixIcon: Icon(Icons.search, color: Colors.white70),
-          filled: true,
-          fillColor: Colors.white.withOpacity(0.1),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(25),
-            borderSide: BorderSide.none,
-          ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-        ),
-        style: GoogleFonts.poppins(color: Colors.white),
-      ),
-    );
-  }
-
-  Widget _buildNotificationButton() {
-    return Stack(
-      children: [
-        IconButton(
-          onPressed: () {},
-          icon: Icon(Icons.notifications_none, color: Colors.white70),
-        ),
-        Positioned(
-          right: 8,
-          top: 8,
-          child: Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.redAccent,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQuickActionButton() {
-    return PopupMenuButton<String>(
-      icon: Icon(Icons.add, color: Colors.white70),
-      itemBuilder: (context) => [
-        PopupMenuItem(value: 'user', child: Text('Add New User')),
-        PopupMenuItem(value: 'policy', child: Text('Create Policy')),
-        PopupMenuItem(value: 'claim', child: Text('Process Claim')),
-        PopupMenuItem(value: 'report', child: Text('Generate Report')),
-      ],
     );
   }
 
   SliverToBoxAdapter _buildStatsOverview() {
     return SliverToBoxAdapter(
-      child: SlideTransition(
-        position: _slideAnimation,
-        child: FadeTransition(
-          opacity: _fadeAnimation,
-          child: Container(
-            padding: const EdgeInsets.all(30),
-            child: Wrap(
-              spacing: 20,
-              runSpacing: 20,
-              children: [
+      child: FadeTransition(
+        opacity: _fadeAnimation,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          child: GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: _getCrossAxisCount(context),
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+              childAspectRatio: 1.2,
+            ),
+            itemCount: 5,
+            itemBuilder: (context, index) {
+              final stats = [
                 _buildStatCard('Total Users', _stats['totalUsers'].toString(), Icons.people, Colors.blueAccent),
                 _buildStatCard('Active Policies', _stats['activePolicies'].toString(), Icons.policy, Colors.greenAccent),
                 _buildStatCard('Pending Claims', _stats['pendingClaims'].toString(), Icons.description, Colors.orangeAccent),
                 _buildStatCard('Revenue', 'R ${_formatCurrency(_stats['totalRevenue'])}', Icons.attach_money, Colors.purpleAccent),
-                _buildStatCard('Risk Score', '${_stats['averageRiskScore'].toStringAsFixed(1)}/10', Icons.security, Colors.redAccent),
-                _buildStatCard('Satisfaction', '${_stats['satisfactionRate'].toStringAsFixed(0)}%', Icons.star, Colors.yellowAccent),
-              ],
-            ),
+                _buildStatCard('Pending Applications', _stats['pendingApplications'].toString(), Icons.pending_actions, Colors.amberAccent),
+              ];
+              return stats[index];
+            },
           ),
         ),
       ),
     );
   }
 
+  int _getCrossAxisCount(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    if (width > 1400) return 5;
+    if (width > 1100) return 3;
+    if (width > 800) return 3;
+    if (width > 500) return 2;
+    return 1;
+  }
+
   Widget _buildStatCard(String title, String value, IconData icon, Color color) {
     return Container(
-      width: 200,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [color.withOpacity(0.2), color.withOpacity(0.05)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
+          colors: [
+            color.withOpacity(0.2),
+            color.withOpacity(0.05),
+          ],
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white.withOpacity(0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Container(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: color.withOpacity(0.2),
               shape: BoxShape.circle,
             ),
             child: Icon(icon, color: color, size: 20),
           ),
-          const SizedBox(height: 15),
-          Text(
-            value,
-            style: GoogleFonts.poppins(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          Text(
-            title,
-            style: GoogleFonts.poppins(
-              color: Colors.white70,
-              fontSize: 14,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  SliverToBoxAdapter _buildQuickActions() {
-    return SliverToBoxAdapter(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 30),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Quick Actions',
-              style: GoogleFonts.poppins(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 15),
-            Wrap(
-              spacing: 15,
-              runSpacing: 15,
-              children: [
-                _buildActionButton('User Management', Icons.people, Colors.blueAccent),
-                _buildActionButton('Applications', Icons.description, Colors.orangeAccent),
-                _buildActionButton('Policy Editor', Icons.edit_document, Colors.greenAccent),
-                _buildActionButton('Risk Analysis', Icons.analytics, Colors.purpleAccent),
-                _buildActionButton('Reports', Icons.bar_chart, Colors.redAccent),
-                _buildActionButton('Settings', Icons.settings, Colors.yellowAccent),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionButton(String title, IconData icon, Color color) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(15),
-      child: InkWell(
-        onTap: () {},
-        borderRadius: BorderRadius.circular(15),
-        child: Container(
-          width: 150,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [color.withOpacity(0.3), color.withOpacity(0.1)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: Colors.white.withOpacity(0.1)),
-          ),
-          child: Column(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(icon, color: color, size: 30),
-              const SizedBox(height: 10),
+              Text(
+                value,
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
               Text(
                 title,
                 style: GoogleFonts.poppins(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
+                  color: Colors.white70,
+                  fontSize: 12,
                 ),
-                textAlign: TextAlign.center,
               ),
             ],
           ),
-        ),
+        ],
       ),
-    );
-  }
-
-  SliverList _buildMainContent() {
-    return SliverList(
-      delegate: SliverChildListDelegate([
-        Container(
-          padding: const EdgeInsets.all(30),
-          child: _getContentForTab(),
-        ),
-      ]),
     );
   }
 
@@ -870,146 +1133,1031 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
       case 2: return _buildApplications();
       case 3: return _buildPolicies();
       case 4: return _buildClaims();
-      case 5: return _buildSystemSettings();
+      case 5: return _buildReports();
       default: return _buildDashboard();
     }
   }
 
   Widget _buildDashboard() {
+    return Container(); // Only stats are shown from the SliverToBoxAdapter
+  }
+
+  Widget _buildUserManagement() {
+    return _users.isEmpty
+        ? _buildEmptyState('No users found', Icons.people)
+        : Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withOpacity(0.1)),
+            ),
+            child: Column(
+              children: [
+                // Table Header
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.white.withOpacity(0.1),
+                        Colors.white.withOpacity(0.05),
+                    ],
+                    ),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      topRight: Radius.circular(16),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: Text(
+                          'User Information',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          'Status',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          'Policies',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          'Actions',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                // Table Rows
+                ..._users.map((user) => _buildUserRow(user)).toList(),
+              ],
+            ),
+          );
+  }
+
+  Widget _buildUserRow(Map<String, dynamic> user) {
+    final userPolicies = _policies.where((policy) => policy['userId'] == user['id']).toList();
+    final status = user['status']?.toString() ?? 'active';
+    final displayName = _getUserDisplayName(user);
+    final email = user['email']?.toString() ?? 'No email';
+    
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1))),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  displayName,
+                  style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  email,
+                  style: GoogleFonts.poppins(
+                    color: Colors.white70,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: _getStatusColor(status).withOpacity(0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                status.toUpperCase(),
+                style: GoogleFonts.poppins(
+                  color: _getStatusColor(status),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              userPolicies.length.toString(),
+              style: GoogleFonts.poppins(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          Expanded(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (status == 'active')
+                  IconButton(
+                    onPressed: () => _showSuspendConfirmation(user),
+                    icon: const Icon(Icons.pause, color: Colors.orangeAccent, size: 22),
+                    tooltip: 'Suspend',
+                  )
+                else
+                  IconButton(
+                    onPressed: () => _activateUser(user['id']),
+                    icon: const Icon(Icons.play_arrow, color: Colors.greenAccent, size: 22),
+                    tooltip: 'Activate',
+                  ),
+                IconButton(
+                  onPressed: () => _showDeleteConfirmation(user),
+                  icon: const Icon(Icons.delete, color: Colors.redAccent, size: 22),
+                    tooltip: 'Delete',
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildApplications() {
+    final pendingApplications = _applications.where((app) => app['status'] == 'submitted').toList();
+    final approvedApplications = _applications.where((app) => app['status'] == 'approved').toList();
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Overview Dashboard',
-          style: GoogleFonts.poppins(
-            color: Colors.white,
-            fontSize: 24,
-            fontWeight: FontWeight.w600,
+        // Pending Applications Section
+        if (pendingApplications.isNotEmpty) ...[
+          Text(
+            'Pending Applications',
+            style: GoogleFonts.poppins(
+              color: Colors.orangeAccent,
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        ),
-        const SizedBox(height: 20),
-        
-        // Recent Activity
-        _buildRecentActivity(),
-        const SizedBox(height: 30),
-        
-        // Performance Metrics
-        _buildPerformanceMetrics(),
+          const SizedBox(height: 16),
+          Column(
+            children: pendingApplications.map((application) => _buildApplicationInfo(application)).toList(),
+          ),
+          const SizedBox(height: 24),
+        ],
+
+        // Approved Applications Section
+        if (approvedApplications.isNotEmpty) ...[
+          Text(
+            'Approved Applications',
+            style: GoogleFonts.poppins(
+              color: Colors.greenAccent,
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Column(
+            children: approvedApplications.map((application) => _buildApplicationInfo(application, showActions: false)).toList(),
+          ),
+        ],
+
+        if (pendingApplications.isEmpty && approvedApplications.isEmpty)
+          _buildEmptyState('No applications found', Icons.description),
       ],
     );
   }
 
-  Widget _buildRecentActivity() {
+  Widget _buildApplicationInfo(Map<String, dynamic> application, {bool showActions = true}) {
+    final quoteData = _safeCastMap(application['quoteData']);
+    final personalInfo = _safeCastMap(application['personalInfo']);
+    final status = application['status']?.toString() ?? 'submitted';
+    
     return Container(
-      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.white.withOpacity(0.05), Colors.white.withOpacity(0.02)],
+          colors: [
+            Colors.white.withOpacity(0.05),
+            Colors.white.withOpacity(0.02),
+        ],
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white.withOpacity(0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${personalInfo['firstName'] ?? ''} ${personalInfo['lastName'] ?? ''}',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      application['userEmail']?.toString() ?? 'No email',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _getStatusColor(status).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  status.toUpperCase(),
+                  style: GoogleFonts.poppins(
+                    color: _getStatusColor(status),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 16),
+          
+          // Vehicle Information
+          Row(
+            children: [
+              const Icon(Icons.directions_car, color: Colors.blueAccent, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                '${quoteData['brand'] ?? ''} ${quoteData['model'] ?? ''} (${quoteData['year'] ?? ''})',
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+              ),
+              const Spacer(),
+              const Icon(Icons.attach_money, color: Colors.greenAccent, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                'R${quoteData['value'] ?? '0'}',
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 12),
+          
+          // Coverage Type
+          Row(
+            children: [
+              const Icon(Icons.security, color: Colors.purpleAccent, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                '${quoteData['coverageType'] ?? 'Comprehensive'} Coverage',
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          
+          if (showActions) ...[
+            const SizedBox(height: 16),
+            
+            // Action Buttons
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => _showApplicationDetails(application),
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.blueAccent.withOpacity(0.1),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: const Icon(Icons.visibility, color: Colors.blueAccent, size: 18),
+                    label: Text(
+                      'View Details',
+                      style: GoogleFonts.poppins(
+                        color: Colors.blueAccent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => _approveApplication(application),
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.greenAccent.withOpacity(0.1),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: const Icon(Icons.check, color: Colors.greenAccent, size: 18),
+                    label: Text(
+                      'Approve',
+                      style: GoogleFonts.poppins(
+                        color: Colors.greenAccent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => _rejectApplication(application['id'], application),
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.redAccent.withOpacity(0.1),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: const Icon(Icons.close, color: Colors.redAccent, size: 18),
+                    label: Text(
+                      'Reject',
+                      style: GoogleFonts.poppins(
+                        color: Colors.redAccent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPolicies() {
+    final activePolicies = _policies.where((policy) => policy['status'] == 'approved' || policy['status'] == 'Active').toList();
+    
+    return activePolicies.isEmpty
+        ? _buildEmptyState('No active policies', Icons.policy)
+        : Column(
+            children: activePolicies.map((policy) => _buildPolicyInfo(policy)).toList(),
+          );
+  }
+
+  Widget _buildPolicyInfo(Map<String, dynamic> policy) {
+    final userName = _getUserNameById(policy['userId'] ?? '');
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.greenAccent.withOpacity(0.1),
+            Colors.greenAccent.withOpacity(0.05),
+        ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      policy['policyNumber']?.toString() ?? 'No Policy Number',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Owner: $userName',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.greenAccent.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  'ACTIVE',
+                  style: GoogleFonts.poppins(
+                    color: Colors.greenAccent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 16),
+          
+          // Policy Details
+          Row(
+            children: [
+              const Icon(Icons.directions_car, color: Colors.blueAccent, size: 16),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  policy['vehicleModel']?.toString() ?? 'Unknown Vehicle',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              const Icon(Icons.attach_money, color: Colors.greenAccent, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                'R${_formatCurrency(policy['premiumAmount'] ?? 0)}',
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 8),
+          
+          Row(
+            children: [
+              const Icon(Icons.security, color: Colors.purpleAccent, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                policy['policyType']?.toString() ?? 'Comprehensive',
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+              ),
+              const Spacer(),
+              const Icon(Icons.calendar_today, color: Colors.orangeAccent, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                '${policy['coverDuration'] ?? '12 Months'}',
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClaims() {
+    final pendingClaims = _claims.where((claim) => claim['status'] == 'Pending').toList();
+    final approvedClaims = _claims.where((claim) => claim['status'] == 'Approved').toList();
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Pending Claims Section
+        if (pendingClaims.isNotEmpty) ...[
           Text(
-            'Recent Activity',
+            'Pending Claims',
             style: GoogleFonts.poppins(
-              color: Colors.white,
+              color: Colors.orangeAccent,
               fontSize: 18,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 15),
-          _users.isEmpty && _applications.isEmpty
-              ? _buildEmptyState('No recent activity', Icons.history)
-              : Column(
-                  children: _buildActivityItems(),
-                ),
+          const SizedBox(height: 16),
+          Column(
+            children: pendingClaims.map((claim) => _buildClaimInfo(claim)).toList(),
+          ),
+          const SizedBox(height: 24),
         ],
-      ),
+
+        // Approved Claims Section
+        if (approvedClaims.isNotEmpty) ...[
+          Text(
+            'Approved Claims',
+            style: GoogleFonts.poppins(
+              color: Colors.greenAccent,
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Column(
+            children: approvedClaims.map((claim) => _buildClaimInfo(claim, showActions: false)).toList(),
+          ),
+        ],
+
+        if (pendingClaims.isEmpty && approvedClaims.isEmpty)
+          _buildEmptyState('No claims found', Icons.analytics),
+      ],
     );
   }
 
-  List<Widget> _buildActivityItems() {
-    final items = <Widget>[];
+  Widget _buildClaimInfo(Map<String, dynamic> claim, {bool showActions = true}) {
+    final status = claim['status']?.toString() ?? 'Pending';
+    final userName = _getUserNameById(claim['userId'] ?? '');
     
-    // Add recent applications
-    final recentApplications = _applications.take(3);
-    for (final app in recentApplications) {
-      items.add(_buildActivityItem(
-        'New Application',
-        '${app['personalInfo']?['firstName'] ?? 'User'} applied for insurance',
-        'Recently',
-        Icons.person_add,
-        Colors.green,
-      ));
-    }
-    
-    // Add recent claims
-    final recentClaims = _claims.take(3);
-    for (final claim in recentClaims) {
-      items.add(_buildActivityItem(
-        'Claim Submitted',
-        'Claim #${claim['id']} submitted',
-        'Recently', 
-        Icons.description,
-        Colors.orange,
-      ));
-    }
-    
-    return items;
-  }
-
-  Widget _buildActivityItem(String title, String subtitle, String time, IconData icon, Color color) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.03),
-        borderRadius: BorderRadius.circular(12),
+        gradient: LinearGradient(
+          colors: [
+            Colors.white.withOpacity(0.05),
+            Colors.white.withOpacity(0.02),
+        ],
+        ),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white.withOpacity(0.1)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: color, size: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Claim #${claim['id']?.toString().substring(0, 8) ?? 'Unknown'}',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'By: $userName',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _getStatusColor(status).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  status.toUpperCase(),
+                  style: GoogleFonts.poppins(
+                    color: _getStatusColor(status),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
+          
+          const SizedBox(height: 16),
+          
+          // Claim Details
+          Row(
+            children: [
+              const Icon(Icons.description, color: Colors.blueAccent, size: 16),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  claim['type']?.toString() ?? 'Unknown Type',
                   style: GoogleFonts.poppins(
                     color: Colors.white,
                     fontSize: 14,
-                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: GoogleFonts.poppins(
-                    color: Colors.white70,
-                    fontSize: 12,
+              ),
+              const Icon(Icons.attach_money, color: Colors.greenAccent, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                'R${_formatCurrency(claim['amount'] ?? 0)}',
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 8),
+          
+          if (claim['description'] != null) ...[
+            Text(
+              'Description: ${claim['description']}',
+              style: GoogleFonts.poppins(
+                color: Colors.white70,
+                fontSize: 14,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 8),
+          ],
+          
+          if (showActions) ...[
+            const SizedBox(height: 16),
+            
+            // Action Buttons
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => _showClaimDetails(claim),
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.blueAccent.withOpacity(0.1),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: const Icon(Icons.visibility, color: Colors.blueAccent, size: 18),
+                    label: Text(
+                      'View Details',
+                      style: GoogleFonts.poppins(
+                        color: Colors.blueAccent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => _approveClaim(claim['id']),
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.greenAccent.withOpacity(0.1),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: const Icon(Icons.check, color: Colors.greenAccent, size: 18),
+                    label: Text(
+                      'Approve',
+                      style: GoogleFonts.poppins(
+                        color: Colors.greenAccent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => _rejectClaim(claim['id'], claim),
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.redAccent.withOpacity(0.1),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: const Icon(Icons.close, color: Colors.redAccent, size: 18),
+                    label: Text(
+                      'Reject',
+                      style: GoogleFonts.poppins(
+                        color: Colors.redAccent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
               ],
             ),
-          ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReports() {
+    final totalRevenue = _stats['totalRevenue'];
+    final activePolicies = _stats['activePolicies'];
+    final pendingClaims = _stats['pendingClaims'];
+    final totalUsers = _stats['totalUsers'];
+    final pendingApplications = _stats['pendingApplications'];
+    
+    // Calculate metrics for reports
+    final averagePremium = activePolicies > 0 ? totalRevenue / activePolicies : 0;
+    final approvalRate = _applications.isNotEmpty ? 
+        (_applications.where((app) => app['status'] == 'approved').length / _applications.length * 100) : 0;
+    final claimApprovalRate = _claims.isNotEmpty ? 
+        (_claims.where((claim) => claim['status'] == 'Approved').length / _claims.length * 100) : 0;
+    
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Key Metrics
           Text(
-            time,
+            'Key Performance Indicators',
             style: GoogleFonts.poppins(
-              color: Colors.white54,
-              fontSize: 11,
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Stats Grid
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+              childAspectRatio: 1.5,
+            ),
+            itemCount: 6,
+            itemBuilder: (context, index) {
+              final stats = [
+                _buildCleanStatCard('Total Revenue', 'R ${_formatCurrency(totalRevenue)}', Icons.attach_money, Colors.greenAccent),
+                _buildCleanStatCard('Active Policies', activePolicies.toString(), Icons.policy, Colors.blueAccent),
+                _buildCleanStatCard('Total Users', totalUsers.toString(), Icons.people, Colors.purpleAccent),
+                _buildCleanStatCard('Pending Applications', pendingApplications.toString(), Icons.pending_actions, Colors.orangeAccent),
+                _buildCleanStatCard('Pending Claims', pendingClaims.toString(), Icons.description, Colors.redAccent),
+                _buildCleanStatCard('Avg Premium', 'R ${_formatCurrency(averagePremium)}', Icons.trending_up, Colors.tealAccent),
+              ];
+              return stats[index];
+            },
+          ),
+
+          const SizedBox(height: 32),
+
+          // Charts Section
+          Text(
+            'Performance Analytics',
+            style: GoogleFonts.poppins(
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Clean Bar Chart for Policy Distribution
+          _buildCleanBarChart(),
+          const SizedBox(height: 24),
+
+
+          const SizedBox(height: 32),
+
+          // Insights Section
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.blueAccent.withOpacity(0.15),
+                  Colors.purpleAccent.withOpacity(0.08),
+              ],
+              ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.insights, color: Colors.blueAccent, size: 28),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Business Insights',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                _buildCleanInsightItem('📈', 'Application approval rate: ${approvalRate.toStringAsFixed(1)}%'),
+                _buildCleanInsightItem('🛡️', 'Claim approval rate: ${claimApprovalRate.toStringAsFixed(1)}%'),
+                _buildCleanInsightItem('💰', 'Average premium per policy: R${_formatCurrency(averagePremium)}'),
+                _buildCleanInsightItem('👥', 'Active user conversion rate: ${((activePolicies / totalUsers) * 100).toStringAsFixed(1)}%'),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 40),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCleanStatCard(String title, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            color.withOpacity(0.15),
+            color.withOpacity(0.05),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 20),
+              ),
+              const Spacer(),
+            ],
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                title,
+                style: GoogleFonts.poppins(
+                  color: Colors.white70,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCleanBarChart() {
+    final policyTypes = ['Comprehensive', 'Third Party', 'Theft', 'Accident'];
+    final policyCounts = [45, 30, 15, 10]; // Sample data
+    
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.blueAccent.withOpacity(0.15),
+            Colors.blueAccent.withOpacity(0.05),
+        ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.bar_chart, color: Colors.blueAccent, size: 24),
+              const SizedBox(width: 12),
+              Text(
+                'Policy Distribution',
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 200,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: List.generate(policyTypes.length, (index) {
+                final percentage = policyCounts[index];
+                final height = (percentage / 50) * 150; // Scale to max 150px
+                final colors = [
+                  Colors.blueAccent,
+                  Colors.greenAccent,
+                  Colors.orangeAccent,
+                  Colors.purpleAccent,
+                ];
+                
+                return Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Container(
+                      width: 40,
+                      height: height,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                          colors: [
+                            colors[index].withOpacity(0.8),
+                            colors[index].withOpacity(0.4),
+                          ],
+                        ),
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(8),
+                          topRight: Radius.circular(8),
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '$percentage%',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: 60,
+                      child: Text(
+                        policyTypes[index],
+                        style: GoogleFonts.poppins(
+                          color: Colors.white70,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                      ),
+                    ),
+                  ],
+                );
+              }),
             ),
           ),
         ],
@@ -1017,70 +2165,248 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
     );
   }
 
-  Widget _buildPerformanceMetrics() {
-    return Row(
-      children: [
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.blueAccent.withOpacity(0.2), Colors.blueAccent.withOpacity(0.05)],
-              ),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Column(
-              children: [
-                Text('Live Performance Metrics', style: GoogleFonts.poppins(color: Colors.white, fontSize: 16)),
-                const SizedBox(height: 20),
-                _buildMetricsGrid(),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+  Widget _buildCleanPieChart(double appRate, double claimRate) {
+    final data = [
+      {'label': 'Applications', 'value': appRate, 'color': Colors.greenAccent},
+      {'label': 'Claims', 'value': claimRate, 'color': Colors.blueAccent},
+      {'label': 'Pending', 'value': 100 - ((appRate + claimRate) / 2), 'color': Colors.orangeAccent},
+    ];
 
-  Widget _buildMetricsGrid() {
-    return Wrap(
-      spacing: 20,
-      runSpacing: 20,
-      children: [
-        _buildMetricItem('New Users Today', _calculateNewUsersToday().toString(), Icons.person_add, Colors.blueAccent),
-        _buildMetricItem('Pending Approvals', _applications.where((app) => app['status'] == 'Pending').length.toString(), Icons.pending, Colors.orangeAccent),
-        _buildMetricItem('Claims Today', _calculateClaimsToday().toString(), Icons.description, Colors.redAccent),
-        _buildMetricItem('Revenue Today', 'R ${_formatCurrency(_calculateRevenueToday())}', Icons.attach_money, Colors.greenAccent),
-      ],
-    );
-  }
-
-  Widget _buildMetricItem(String title, String value, IconData icon, Color color) {
     return Container(
-      width: 150,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.purpleAccent.withOpacity(0.15),
+            Colors.purpleAccent.withOpacity(0.05),
+        ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.purpleAccent.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.pie_chart, color: Colors.purpleAccent, size: 24),
+              const SizedBox(width: 12),
+              Text(
+                'Approval Rates',
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              // Simple pie chart visualization
+              Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const SweepGradient(
+                    colors: [Colors.greenAccent, Colors.blueAccent, Colors.orangeAccent],
+                    stops: [0.3, 0.6, 1.0],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.purpleAccent.withOpacity(0.3),
+                      blurRadius: 10,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: Container(
+                    width: 60,
+                    height: 60,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Color(0xFF1E293B),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${((appRate + claimRate) / 2).toStringAsFixed(0)}%',
+                        style: GoogleFonts.poppins(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 24),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: data.map((item) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: item['color'] as Color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            item['label'] as String,
+                            style: GoogleFonts.poppins(
+                              color: Colors.white70,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '${(item['value'] as double).toStringAsFixed(1)}%',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )).toList(),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetricsOverview(double appRate, double claimRate, double avgPremium) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.greenAccent.withOpacity(0.15),
+            Colors.greenAccent.withOpacity(0.05),
+        ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.analytics, color: Colors.greenAccent, size: 24),
+              const SizedBox(width: 12),
+              Text(
+                'Performance Metrics',
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 16,
+            runSpacing: 16,
+            children: [
+              _buildMetricChip('Application Approval', '${appRate.toStringAsFixed(1)}%', Colors.greenAccent),
+              _buildMetricChip('Claim Approval', '${claimRate.toStringAsFixed(1)}%', Colors.blueAccent),
+              _buildMetricChip('Avg Processing Time', '2.3 days', Colors.orangeAccent),
+              _buildMetricChip('Customer Satisfaction', '94%', Colors.purpleAccent),
+              _buildMetricChip('Policy Renewal Rate', '88%', Colors.tealAccent),
+              _buildMetricChip('Revenue Growth', '+12.5%', Colors.greenAccent),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetricChip(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: color.withOpacity(0.3)),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 8),
           Text(
             value,
             style: GoogleFonts.poppins(
-              color: Colors.white,
-              fontSize: 18,
+              color: color,
+              fontSize: 16,
               fontWeight: FontWeight.w700,
             ),
           ),
+          const SizedBox(height: 4),
           Text(
-            title,
+            label,
             style: GoogleFonts.poppins(
               color: Colors.white70,
               fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCleanInsightItem(String emoji, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            emoji,
+            style: const TextStyle(fontSize: 16),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: GoogleFonts.poppins(
+                color: Colors.white70,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(String message, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(60),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: Colors.white30, size: 80),
+          const SizedBox(height: 20),
+          Text(
+            message,
+            style: GoogleFonts.poppins(
+              color: Colors.white30,
+              fontSize: 16,
             ),
             textAlign: TextAlign.center,
           ),
@@ -1089,473 +2415,62 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
     );
   }
 
-  int _calculateNewUsersToday() {
-    final today = DateTime.now();
-    return _users.where((user) {
-      final createdAt = user['createdAt'];
-      if (createdAt == null) return false;
-      final userDate = DateTime.fromMillisecondsSinceEpoch(createdAt);
-      return userDate.year == today.year && userDate.month == today.month && userDate.day == today.day;
-    }).length;
-  }
-
-  int _calculateClaimsToday() {
-    final today = DateTime.now();
-    return _claims.where((claim) {
-      final submittedAt = claim['submittedAt'];
-      if (submittedAt == null) return false;
-      final claimDate = DateTime.fromMillisecondsSinceEpoch(submittedAt);
-      return claimDate.year == today.year && claimDate.month == today.month && claimDate.day == today.day;
-    }).length;
-  }
-
-  double _calculateRevenueToday() {
-    final today = DateTime.now();
-    double total = 0;
-    for (final policy in _policies) {
-      final createdAt = policy['createdAt'];
-      if (createdAt != null) {
-        final policyDate = DateTime.fromMillisecondsSinceEpoch(createdAt);
-        if (policyDate.year == today.year && policyDate.month == today.month && policyDate.day == today.day) {
-          final premium = double.tryParse(policy['premiumAmount']?.toString() ?? '0') ?? 0;
-          total += premium;
-        }
-      }
-    }
-    return total;
-  }
-
-  Widget _buildUserManagement() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'User Management',
+    void _showSuspendConfirmation(Map<String, dynamic> user) {
+    final displayName = _getUserDisplayName(user);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E2A3B),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.orangeAccent.withOpacity(0.3)),
+        ),
+        title: Text(
+          'Suspend User',
+          style: GoogleFonts.poppins(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to suspend $displayName?',
+          style: GoogleFonts.poppins(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              backgroundColor: Colors.white.withOpacity(0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              'Cancel',
               style: GoogleFonts.poppins(
-                color: Colors.white,
-                fontSize: 24,
+                color: Colors.white70,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              _suspendUser(user['id']);
+              Navigator.pop(context);
+            },
+            style: TextButton.styleFrom(
+              backgroundColor: Colors.orangeAccent.withOpacity(0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              'Suspend',
+              style: GoogleFonts.poppins(
+                color: Colors.orangeAccent,
                 fontWeight: FontWeight.w600,
               ),
-            ),
-            ElevatedButton.icon(
-              onPressed: () {},
-              icon: Icon(Icons.add, size: 18),
-              label: Text('Add User'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blueAccent,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        
-        // Users Table
-        _users.isEmpty
-            ? _buildEmptyState('No users found', Icons.people)
-            : Container(
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: DataTable(
-                    headingTextStyle: GoogleFonts.poppins(color: Colors.white70, fontWeight: FontWeight.w600),
-                    dataTextStyle: GoogleFonts.poppins(color: Colors.white),
-                    columns: const [
-                      DataColumn(label: Text('User ID')),
-                      DataColumn(label: Text('Name')),
-                      DataColumn(label: Text('Email')),
-                      DataColumn(label: Text('Policy')),
-                      DataColumn(label: Text('Status')),
-                      DataColumn(label: Text('Premium')),
-                      DataColumn(label: Text('Risk Level')),
-                      DataColumn(label: Text('Actions')),
-                    ],
-                    rows: _users.map((user) => DataRow(cells: [
-                      DataCell(Text(user['id']?.toString().substring(0, 8) ?? 'N/A')),
-                      DataCell(Row(
-                        children: [
-                          Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              color: _getAvatarColor(user['email'] ?? ''),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Center(
-                              child: Text(
-                                _getInitials(user['firstName'] ?? '', user['lastName'] ?? ''),
-                                style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Text('${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'),
-                        ],
-                      )),
-                      DataCell(Text(user['email'] ?? 'N/A')),
-                      DataCell(Text(user['policyType'] ?? 'No Policy')),
-                      DataCell(
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: _getStatusColor(user['status'] ?? 'Pending').withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            user['status'] ?? 'Pending',
-                            style: GoogleFonts.poppins(
-                              color: _getStatusColor(user['status'] ?? 'Pending'),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ),
-                      DataCell(Text('R ${_formatCurrency(user['premiumAmount'] ?? 0)}')),
-                      DataCell(
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: _getRiskColor(user['riskLevel'] ?? 'Medium').withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            user['riskLevel'] ?? 'Medium',
-                            style: GoogleFonts.poppins(
-                              color: _getRiskColor(user['riskLevel'] ?? 'Medium'),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ),
-                      DataCell(Row(
-                        children: [
-                          IconButton(
-                            onPressed: () => _updateUserStatus(user['id'], 'Active'),
-                            icon: Icon(Icons.check, color: Colors.greenAccent, size: 18),
-                          ),
-                          IconButton(
-                            onPressed: () => _updateUserStatus(user['id'], 'Suspended'),
-                            icon: Icon(Icons.block, color: Colors.redAccent, size: 18),
-                          ),
-                        ],
-                      )),
-                    ])).toList(),
-                  ),
-                ),
-              ),
-      ],
-    );
-  }
-
-  Widget _buildApplications() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Insurance Applications',
-          style: GoogleFonts.poppins(
-            color: Colors.white,
-            fontSize: 24,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 20),
-        
-        _applications.isEmpty
-            ? _buildEmptyState('No pending applications', Icons.description)
-            : Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                child: Column(
-                  children: [
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        headingTextStyle: GoogleFonts.poppins(color: Colors.white70, fontWeight: FontWeight.w600),
-                        dataTextStyle: GoogleFonts.poppins(color: Colors.white),
-                        columns: const [
-                          DataColumn(label: Text('App ID')),
-                          DataColumn(label: Text('Applicant')),
-                          DataColumn(label: Text('Email')),
-                          DataColumn(label: Text('Vehicle')),
-                          DataColumn(label: Text('Applied On')),
-                          DataColumn(label: Text('Status')),
-                          DataColumn(label: Text('Actions')),
-                        ],
-                        rows: _applications.map((app) => DataRow(cells: [
-                          DataCell(Text(app['id']?.toString().substring(0, 8) ?? 'N/A')),
-                          DataCell(Text('${app['personalInfo']?['firstName'] ?? ''} ${app['personalInfo']?['lastName'] ?? ''}')),
-                          DataCell(Text(app['personalInfo']?['email'] ?? 'N/A')),
-                          DataCell(Text(app['vehicleModel'] ?? 'N/A')),
-                          DataCell(Text(_formatDate(app['submittedAt']))),
-                          DataCell(
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: _getStatusColor(app['status'] ?? 'Pending').withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                app['status'] ?? 'Pending',
-                                style: GoogleFonts.poppins(
-                                  color: _getStatusColor(app['status'] ?? 'Pending'),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ),
-                          DataCell(Row(
-                            children: [
-                              if ((app['status'] ?? 'Pending') == 'Pending') ...[
-                                IconButton(
-                                  onPressed: () => _approveApplication(app['id']),
-                                  icon: Icon(Icons.check, color: Colors.greenAccent, size: 18),
-                                ),
-                                IconButton(
-                                  onPressed: () => _rejectApplication(app['id']),
-                                  icon: Icon(Icons.close, color: Colors.redAccent, size: 18),
-                                ),
-                              ],
-                              IconButton(
-                                onPressed: () {},
-                                icon: Icon(Icons.visibility, color: Colors.blueAccent, size: 18),
-                              ),
-                            ],
-                          )),
-                        ])).toList(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-      ],
-    );
-  }
-
-  Widget _buildPolicies() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Policy Management',
-          style: GoogleFonts.poppins(
-            color: Colors.white,
-            fontSize: 24,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 20),
-        
-        _policies.isEmpty
-            ? _buildEmptyState('No policies found', Icons.policy)
-            : Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                child: Column(
-                  children: [
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        headingTextStyle: GoogleFonts.poppins(color: Colors.white70, fontWeight: FontWeight.w600),
-                        dataTextStyle: GoogleFonts.poppins(color: Colors.white),
-                        columns: const [
-                          DataColumn(label: Text('Policy ID')),
-                          DataColumn(label: Text('User')),
-                          DataColumn(label: Text('Type')),
-                          DataColumn(label: Text('Premium')),
-                          DataColumn(label: Text('Status')),
-                          DataColumn(label: Text('Start Date')),
-                          DataColumn(label: Text('End Date')),
-                        ],
-                        rows: _policies.map((policy) => DataRow(cells: [
-                          DataCell(Text(policy['id']?.toString().substring(0, 8) ?? 'N/A')),
-                          DataCell(Text(policy['userName'] ?? 'N/A')),
-                          DataCell(Text(policy['policyType'] ?? 'N/A')),
-                          DataCell(Text('R ${_formatCurrency(policy['premiumAmount'] ?? 0)}')),
-                          DataCell(
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: _getStatusColor(policy['status'] ?? 'Active').withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                policy['status'] ?? 'Active',
-                                style: GoogleFonts.poppins(
-                                  color: _getStatusColor(policy['status'] ?? 'Active'),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ),
-                          DataCell(Text(_formatDate(policy['startDate']))),
-                          DataCell(Text(_formatDate(policy['endDate']))),
-                        ])).toList(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-      ],
-    );
-  }
-
-  Widget _buildClaims() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Claims Management',
-          style: GoogleFonts.poppins(
-            color: Colors.white,
-            fontSize: 24,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 20),
-        
-        _claims.isEmpty
-            ? _buildEmptyState('No claims found', Icons.description)
-            : Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                child: Column(
-                  children: [
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        headingTextStyle: GoogleFonts.poppins(color: Colors.white70, fontWeight: FontWeight.w600),
-                        dataTextStyle: GoogleFonts.poppins(color: Colors.white),
-                        columns: const [
-                          DataColumn(label: Text('Claim ID')),
-                          DataColumn(label: Text('User')),
-                          DataColumn(label: Text('Type')),
-                          DataColumn(label: Text('Amount')),
-                          DataColumn(label: Text('Status')),
-                          DataColumn(label: Text('Submitted')),
-                          DataColumn(label: Text('Actions')),
-                        ],
-                        rows: _claims.map((claim) => DataRow(cells: [
-                          DataCell(Text(claim['id']?.toString().substring(0, 8) ?? 'N/A')),
-                          DataCell(Text(claim['userName'] ?? 'N/A')),
-                          DataCell(Text(claim['type'] ?? 'N/A')),
-                          DataCell(Text('R ${_formatCurrency(claim['amount'] ?? 0)}')),
-                          DataCell(
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: _getStatusColor(claim['status'] ?? 'Pending').withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                claim['status'] ?? 'Pending',
-                                style: GoogleFonts.poppins(
-                                  color: _getStatusColor(claim['status'] ?? 'Pending'),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ),
-                          DataCell(Text(_formatDate(claim['submittedAt']))),
-                          DataCell(Row(
-                            children: [
-                              if ((claim['status'] ?? 'Pending') == 'Pending') ...[
-                                IconButton(
-                                  onPressed: () => _processClaim(claim['id'], 'Approved'),
-                                  icon: Icon(Icons.check, color: Colors.greenAccent, size: 18),
-                                ),
-                                IconButton(
-                                  onPressed: () => _processClaim(claim['id'], 'Rejected'),
-                                  icon: Icon(Icons.close, color: Colors.redAccent, size: 18),
-                                ),
-                              ],
-                              IconButton(
-                                onPressed: () {},
-                                icon: Icon(Icons.visibility, color: Colors.blueAccent, size: 18),
-                              ),
-                            ],
-                          )),
-                        ])).toList(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-      ],
-    );
-  }
-
-  Widget _buildSystemSettings() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'System Settings',
-          style: GoogleFonts.poppins(
-            color: Colors.white,
-            fontSize: 24,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 20),
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(15),
-          ),
-          child: Column(
-            children: [
-              Text(
-                'System Configuration Panel',
-                style: GoogleFonts.poppins(color: Colors.white70),
-              ),
-              const SizedBox(height: 20),
-              // Settings implementation would go here
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildEmptyState(String message, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(40),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: Colors.white54, size: 64),
-          const SizedBox(height: 16),
-          Text(
-            message,
-            style: GoogleFonts.poppins(
-              color: Colors.white70,
-              fontSize: 16,
             ),
           ),
         ],
@@ -1563,80 +2478,338 @@ class _AdminDashboardState extends State<AdminDashboard> with TickerProviderStat
     );
   }
 
-  String _getInitials(String firstName, String lastName) {
-    return '${firstName.isNotEmpty ? firstName[0] : ''}${lastName.isNotEmpty ? lastName[0] : ''}'.toUpperCase();
+  void _showDeleteConfirmation(Map<String, dynamic> user) {
+    final displayName = _getUserDisplayName(user);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E2A3B),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.redAccent.withOpacity(0.3)),
+        ),
+        title: Text(
+          'Delete User',
+          style: GoogleFonts.poppins(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to delete $displayName? This action cannot be undone.',
+          style: GoogleFonts.poppins(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              backgroundColor: Colors.white.withOpacity(0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.poppins(
+                color: Colors.white70,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              _deleteUser(user['id']);
+              Navigator.pop(context);
+            },
+            style: TextButton.styleFrom(
+              backgroundColor: Colors.redAccent.withOpacity(0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              'Delete',
+              style: GoogleFonts.poppins(
+                color: Colors.redAccent,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  Color _getAvatarColor(String email) {
-    final colors = [
-      Colors.blueAccent,
-      Colors.purpleAccent,
-      Colors.greenAccent,
-      Colors.orangeAccent,
-      Colors.redAccent,
-    ];
-    final index = email.hashCode % colors.length;
-    return colors[index];
+  void _showApplicationDetails(Map<String, dynamic> application) {
+    final quoteData = _safeCastMap(application['quoteData']);
+    final personalInfo = _safeCastMap(application['personalInfo']);
+    final documents = _safeCastMap(application['documents']);
+    
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: const Color(0xFF1E2A3B),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.blueAccent.withOpacity(0.3)),
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.8,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  'Application Details',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildDetailSection('Personal Information', [
+                        _buildDetailItem('Full Name', '${personalInfo['firstName'] ?? ''} ${personalInfo['lastName'] ?? ''}'),
+                        _buildDetailItem('ID Number', personalInfo['idNumber']?.toString() ?? 'N/A'),
+                        _buildDetailItem('Contact', personalInfo['contactNumber']?.toString() ?? 'N/A'),
+                        _buildDetailItem('Address', personalInfo['address']?.toString() ?? 'N/A'),
+                        _buildDetailItem('Email', application['userEmail']?.toString() ?? 'N/A'),
+                        _buildDetailItem('Cover Duration', personalInfo['coverDuration']?.toString() ?? '12 Months'),
+                      ]),
+                      
+                      const SizedBox(height: 16),
+                      
+                      _buildDetailSection('Vehicle Details', [
+                        _buildDetailItem('Brand', quoteData['brand']?.toString() ?? 'N/A'),
+                        _buildDetailItem('Model', quoteData['model']?.toString() ?? 'N/A'),
+                        _buildDetailItem('Year', quoteData['year']?.toString() ?? 'N/A'),
+                        _buildDetailItem('Color', quoteData['color']?.toString() ?? 'N/A'),
+                        _buildDetailItem('Registration', quoteData['regNumber']?.toString() ?? 'N/A'),
+                        _buildDetailItem('Vehicle Value', 'R${quoteData['value']?.toString() ?? 'N/A'}'),
+                        _buildDetailItem('Coverage Type', quoteData['coverageType']?.toString() ?? 'Comprehensive'),
+                      ]),
+                      
+                      const SizedBox(height: 16),
+                      
+                      _buildDetailSection('Document Status', [
+                        _buildDocumentStatusItem('ID Document', documents['id_document'] == true),
+                        _buildDocumentStatusItem('Proof of Address', documents['proof_of_address'] == true),
+                        _buildDocumentStatusItem('Vehicle Photos', documents['vehicle_photos'] == true),
+                        _buildDocumentStatusItem('Vehicle Registration', documents['vehicle_registration'] == true),
+                      ]),
+                    ],
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: TextButton.styleFrom(
+                        backgroundColor: Colors.blueAccent.withOpacity(0.1),
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      ),
+                      child: Text(
+                        'Close',
+                        style: GoogleFonts.poppins(
+                          color: Colors.blueAccent,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
-  Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'active':
-      case 'approved':
-        return Colors.greenAccent;
-      case 'pending':
-        return Colors.orangeAccent;
-      case 'suspended':
-      case 'rejected':
-        return Colors.redAccent;
-      default:
-        return Colors.grey;
-    }
+  Widget _buildDetailSection(String title, List<Widget> children) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: GoogleFonts.poppins(
+            color: Colors.blueAccent,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        ...children,
+      ],
+    );
   }
 
-  Color _getRiskColor(String riskLevel) {
-    switch (riskLevel.toLowerCase()) {
-      case 'low':
-        return Colors.greenAccent;
-      case 'medium':
-        return Colors.orangeAccent;
-      case 'high':
-        return Colors.redAccent;
-      default:
-        return Colors.grey;
-    }
+  Widget _buildDetailItem(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$label: ',
+            style: GoogleFonts.poppins(
+              color: Colors.white70,
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.poppins(
+                color: Colors.white,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  String _formatDate(dynamic timestamp) {
-    if (timestamp == null) return 'N/A';
-    if (timestamp is int) {
-      final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
-      return '${date.day}/${date.month}/${date.year}';
-    }
-    return timestamp.toString();
+  Widget _buildDocumentStatusItem(String documentName, bool isUploaded) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(
+            isUploaded ? Icons.check_circle : Icons.warning,
+            color: isUploaded ? Colors.greenAccent : Colors.orangeAccent,
+            size: 16,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              documentName,
+              style: GoogleFonts.poppins(
+                color: Colors.white70,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          Text(
+            isUploaded ? 'Uploaded' : 'Not Uploaded',
+            style: GoogleFonts.poppins(
+              color: isUploaded ? Colors.greenAccent : Colors.orangeAccent,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  String _formatCurrency(dynamic amount) {
-    final value = double.tryParse(amount.toString()) ?? 0;
-    return value.toStringAsFixed(0);
-  }
-
-  String _getTitle() {
-    switch (_selectedTab) {
-      case 0:
-        return 'Dashboard Overview';
-      case 1:
-        return 'User Management';
-      case 2:
-        return 'Applications Center';
-      case 3:
-        return 'Policy Management';
-      case 4:
-        return 'Claims Center';
-      case 5:
-        return 'System Settings';
-      default:
-        return 'Admin Portal';
-    }
+  void _showClaimDetails(Map<String, dynamic> claim) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: const Color(0xFF1E2A3B),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.blueAccent.withOpacity(0.3)),
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.8,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  'Claim Details',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildDetailSection('Claim Information', [
+                        _buildDetailItem('Claim ID', claim['id']?.toString() ?? 'N/A'),
+                        _buildDetailItem('User Email', claim['userEmail']?.toString() ?? 'N/A'),
+                        _buildDetailItem('Claim Type', claim['type']?.toString() ?? 'N/A'),
+                        _buildDetailItem('Claim Amount', 'R${_formatCurrency(claim['amount'] ?? 0)}'),
+                        _buildDetailItem('Status', claim['status']?.toString() ?? 'Pending'),
+                        _buildDetailItem('Description', claim['description']?.toString() ?? 'No description provided'),
+                      ]),
+                      
+                      if (claim['incidentDate'] != null) ...[
+                        const SizedBox(height: 16),
+                        _buildDetailSection('Incident Details', [
+                          _buildDetailItem('Incident Date', _formatDate(claim['incidentDate'])),
+                          _buildDetailItem('Incident Location', claim['incidentLocation']?.toString() ?? 'N/A'),
+                          _buildDetailItem('Police Report', claim['policeReport']?.toString() ?? 'No'),
+                        ]),
+                      ],
+                      
+                      if (claim['documents'] != null && claim['documents'] is Map) ...[
+                        const SizedBox(height: 16),
+                        _buildDetailSection('Document Status', [
+                          _buildDocumentStatusItem('Photos Uploaded', claim['documents']['photos'] == true),
+                          _buildDocumentStatusItem('Police Report', claim['documents']['police_report'] == true),
+                          _buildDocumentStatusItem('Repair Estimates', claim['documents']['estimates'] == true),
+                        ]),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: TextButton.styleFrom(
+                        backgroundColor: Colors.blueAccent.withOpacity(0.1),
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      ),
+                      child: Text(
+                        'Close',
+                        style: GoogleFonts.poppins(
+                          color: Colors.blueAccent,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

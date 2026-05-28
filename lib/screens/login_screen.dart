@@ -5,7 +5,6 @@ import 'package:firebase_database/firebase_database.dart';
 import 'signup_screen.dart';
 import 'home_screen.dart';
 import 'admin_dashboard.dart';
-import 'auto_sure_logo.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -50,7 +49,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     );
     
     _scaleAnimation = Tween<double>(
-      begin: 0.8, // Changed from 0.5 to match signup
+      begin: 0.8,
       end: 1.0,
     ).animate(CurvedAnimation(
       parent: _masterController,
@@ -66,7 +65,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     ));
     
     _slideAnimation = Tween<Offset>(
-      begin: const Offset(0.0, 0.2), // Changed from 0.3 to match signup
+      begin: const Offset(0.0, 0.2),
       end: Offset.zero,
     ).animate(CurvedAnimation(
       parent: _formController,
@@ -74,7 +73,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     ));
 
     _masterController.forward();
-    Future.delayed(const Duration(milliseconds: 400), () { // Reduced delay to match signup
+    Future.delayed(const Duration(milliseconds: 400), () {
       _formController.forward();
     });
 
@@ -137,7 +136,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     setState(() => _isLoading = true);
 
     try {
-      // Step 1: Firebase Auth login
       final userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
@@ -146,7 +144,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       final user = userCredential.user;
       if (user == null) throw Exception("No user found");
 
-      // Step 2: Get user details from Realtime Database
       final userRef = FirebaseDatabase.instance.ref("users/${user.uid}");
       final snapshot = await userRef.get();
 
@@ -159,14 +156,8 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
         isAdmin = data['isAdmin'] == true || data['role'] == "admin";
       }
 
-      // Step 3: Debugging print (optional)
-      print("✅ Login successful → ${isAdmin ? 'Admin' : 'Normal User'}");
-      print("👤 Username: $username");
-
-      // Step 4: Stop loading before navigation
       if (mounted) setState(() => _isLoading = false);
 
-      // Step 5: Redirect based on role
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
@@ -179,13 +170,11 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
     } on FirebaseAuthException catch (e) {
       setState(() => _isLoading = false);
-
       String message = 'Login failed. Please try again.';
       if (e.code == 'user-not-found') message = 'No account found with this email.';
       else if (e.code == 'wrong-password') message = 'Incorrect password.';
       else if (e.code == 'invalid-email') message = 'Invalid email format.';
       else if (e.code == 'too-many-requests') message = 'Too many failed attempts. Try later.';
-
       _showErrorDialog(message);
     } catch (e) {
       setState(() => _isLoading = false);
@@ -275,12 +264,12 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                       children: [
                         const SizedBox(height: 20),
                         
-                        // Header Section - Matches signup structure
+                        // Header Section - UPDATED LOGO ONLY
                         SlideTransition(
                           position: _slideAnimation,
                           child: Column(
                             children: [
-                              // Logo with Premium Animation
+                              // Circular AutoSure Logo (same as welcome screen but smaller)
                               Container(
                                 width: 120,
                                 height: 120,
@@ -294,9 +283,66 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                                     ),
                                   ],
                                 ),
-                                child: const AutoSureLogo(
-                                  size: 100,
-                                  animated: true,
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    // Outer ring
+                                    Container(
+                                      width: 100,
+                                      height: 100,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: Colors.white.withOpacity(0.3),
+                                          width: 2,
+                                        ),
+                                      ),
+                                    ),
+                                    
+                                    // Middle ring
+                                    Container(
+                                      width: 80,
+                                      height: 80,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: Colors.white.withOpacity(0.2),
+                                          width: 1.5,
+                                        ),
+                                      ),
+                                    ),
+                                    
+                                    // Logo content
+                                    Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.security_rounded,
+                                          size: 28,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'AUTO',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                            color: Colors.white,
+                                            letterSpacing: 2,
+                                          ),
+                                        ),
+                                        Text(
+                                          'SURE',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w300,
+                                            color: Colors.white,
+                                            letterSpacing: 2,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                 ),
                               ),
                               const SizedBox(height: 20),
@@ -386,7 +432,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    // Header - Matches signup style
                                     Align(
                                       alignment: Alignment.centerLeft,
                                       child: Text(
