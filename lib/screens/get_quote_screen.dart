@@ -341,11 +341,41 @@ class _GetQuoteScreenState extends State<GetQuoteScreen>
 
   void _showError(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: Colors.redAccent,
-        behavior: SnackBarBehavior.floating,
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color.fromARGB(255, 16, 52, 90),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.redAccent, size: 24),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Something went wrong',
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          msg,
+          style: GoogleFonts.poppins(color: Colors.white70, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'OK',
+              style: GoogleFonts.poppins(
+                  color: Colors.blueAccent, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
       ),
     );
   }
