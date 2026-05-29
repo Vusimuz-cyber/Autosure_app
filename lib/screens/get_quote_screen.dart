@@ -6,7 +6,7 @@ import 'apply_insurance_screen.dart';
 
 class GetQuoteScreen extends StatefulWidget {
   const GetQuoteScreen({super.key});
-
+  
   @override
   State<GetQuoteScreen> createState() => _GetQuoteScreenState();
 }
