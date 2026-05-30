@@ -308,33 +308,33 @@ class _GetQuoteScreenState extends State<GetQuoteScreen>
             headers: {'Content-Type': 'application/json'},
             body: body,
           )
-          // FIX: 30 s timeout — Render.com free tier can take 30-50 s to cold-start.
-          // 15 s caused spurious "Connection error" failures on first request.
-          .timeout(const Duration(seconds: 30));
+          // 60s timeout — Render free tier cold-starts can take 50s+
+          .timeout(const Duration(seconds: 60));
 
-      print('📥 API response ${response.statusCode}: ${response.body}');
+      print('📥 API response \${response.statusCode}: \${response.body}');
 
       if (response.statusCode == 200) {
         setState(() => _error = null);
         final decoded = jsonDecode(response.body) as Map<String, dynamic>;
 
-        // Guard: make sure the three premium fields are present
         if (!decoded.containsKey('comprehensive') ||
             !decoded.containsKey('smart') ||
             !decoded.containsKey('third_party')) {
           setState(() =>
-              _error = 'Unexpected API response — missing premium fields');
+              _error = 'API response missing premium fields.\nRaw: \${response.body}');
           return null;
         }
         return decoded;
       } else {
         setState(() =>
-            _error = 'API Error ${response.statusCode}: ${response.body}');
+            _error = 'API Error \${response.statusCode}:\n\${response.body}');
         return null;
       }
-    } on Exception catch (e) {
-      setState(() => _error = 'Connection error: $e');
-      print('❌ API error: $e');
+    } catch (e, stack) {
+      // catch(e) catches BOTH Exception and Error — on Exception catch misses
+      // Dart Errors (TypeError, AssertionError, etc.) which vanish silently.
+      print('❌ API error: $e\n$stack');
+      setState(() => _error = 'Error: $e');
       return null;
     }
   }
@@ -437,25 +437,31 @@ class _GetQuoteScreenState extends State<GetQuoteScreen>
   // Now we show/hide an overlay so the user knows something is happening.
   void _showQuoteResults() async {
     if (!mounted) return;
-    setState(() => _isLoading = true);
+    try {
+      setState(() => _isLoading = true);
 
-    final apiResponse = await _calculateQuote();
+      final apiResponse = await _calculateQuote();
 
-    if (!mounted) return;
-    setState(() => _isLoading = false);
+      if (!mounted) return;
+      setState(() => _isLoading = false);
 
-    if (apiResponse == null) {
-      // Error is already surfaced via setState(_error) in _calculateQuote
-      if (_error != null) _showError(_error!);
-      return;
+      if (apiResponse == null) {
+        _showError(_error ?? 'No response from server. Check your connection and try again.');
+        return;
+      }
+
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) => _buildQuoteResults(apiResponse),
+      );
+    } catch (e, stack) {
+      print('❌ _showQuoteResults error: $e\n$stack');
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showError('Unexpected error:\n$e');
     }
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _buildQuoteResults(apiResponse),
-    );
   }
 
   // ── Quote results bottom sheet ──────────────────────────────────────────────
