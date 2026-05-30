@@ -25,7 +25,6 @@ class _ClaimsScreenState extends State<ClaimsScreen> with TickerProviderStateMix
   final ScrollController _scrollController = ScrollController();
   final DatabaseReference _claimsRef = FirebaseDatabase.instance.ref('claims');
   final DatabaseReference _policiesRef = FirebaseDatabase.instance.ref('policies');
-  final DatabaseReference _usersRef = FirebaseDatabase.instance.ref('users');
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
   // Form controllers
