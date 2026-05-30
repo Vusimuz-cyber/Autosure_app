@@ -1,0 +1,14 @@
+.venv
+__pycache__
+*.pyc
+*.pkl
+data/
+models/
+src/
+*.py
+*.txt
+*.yaml
+*.csv
+.python-version
+render.yaml
+runtime.txt
