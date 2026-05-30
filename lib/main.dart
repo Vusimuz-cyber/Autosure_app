@@ -4,26 +4,29 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'firebase_options.dart'; // Keep this import
+import 'firebase_options.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/admin_dashboard.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   try {
-    // Use FirebaseOptions for initialization - THIS IS CORRECT
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
     print('✅ Firebase initialized successfully');
-    
-      if (!kIsWeb) {
-       FirebaseDatabase.instance.setPersistenceEnabled(true);
-       FirebaseDatabase.instance.setPersistenceCacheSizeBytes(10000000);
+
+    if (!kIsWeb) {
+      FirebaseDatabase.instance.setPersistenceEnabled(true);
+      FirebaseDatabase.instance.setPersistenceCacheSizeBytes(10000000);
     }
-    
+
+    // Always sign out on app start so the user must log in every time.
+    await FirebaseAuth.instance.signOut();
+    print('✅ Signed out on startup');
+
     runApp(const AutosureApp());
   } catch (e) {
     print('❌ Firebase initialization failed: $e');
@@ -58,7 +61,7 @@ class AutosureApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const AuthWrapper(),
+      home: const WelcomeScreen(), // Always start at WelcomeScreen
       debugShowCheckedModeBanner: false,
     );
   }
@@ -79,11 +82,7 @@ class ErrorApp extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(
-                  Icons.error_outline,
-                  color: Colors.red,
-                  size: 64,
-                ),
+                const Icon(Icons.error_outline, color: Colors.red, size: 64),
                 const SizedBox(height: 20),
                 Text(
                   'Initialization Error',
@@ -97,9 +96,7 @@ class ErrorApp extends StatelessWidget {
                 Text(
                   error,
                   style: GoogleFonts.poppins(
-                    color: Colors.white70,
-                    fontSize: 16,
-                  ),
+                      color: Colors.white70, fontSize: 16),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 20),
@@ -116,6 +113,7 @@ class ErrorApp extends StatelessWidget {
   }
 }
 
+// AuthWrapper is now only used after successful login — not on startup.
 class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
 
@@ -145,72 +143,53 @@ class _AuthWrapperState extends State<AuthWrapper> {
         }
       });
 
-      // Add timeout for initial load
       await Future.any([
         Future.delayed(const Duration(seconds: 10)),
         FirebaseAuth.instance.authStateChanges().first,
       ]);
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = 'Authentication error: $e';
-        });
-      }
+      if (mounted) setState(() => _error = 'Authentication error: $e');
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     if (_isLoading) return _buildLoadingScreen();
-    
     if (_error != null) return _buildErrorScreen(_error!);
-
-    // If no user logged in → Welcome screen
     if (_user == null) return const WelcomeScreen();
 
-    // If user logged in → check admin or normal user in Realtime DB
     return FutureBuilder<UserData>(
       future: _getUserData(_user!.uid),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return _buildLoadingScreen();
         }
-
         if (snapshot.hasError) {
-          return _buildErrorScreen('Failed to load user data: ${snapshot.error}');
+          return _buildErrorScreen(
+              'Failed to load user data: ${snapshot.error}');
         }
-
-        final userData = snapshot.data ?? UserData(name: 'User', isAdmin: false);
-
-        if (userData.isAdmin) {
-          return const AdminDashboard();
-        } else {
-          return HomeScreen(username: userData.name);
-        }
+        final userData =
+            snapshot.data ?? UserData(name: 'User', isAdmin: false);
+        if (userData.isAdmin) return const AdminDashboard();
+        return HomeScreen(username: userData.name);
       },
     );
   }
 
-  /// 🔹 Get user data (name and type) in single call
   Future<UserData> _getUserData(String uid) async {
     try {
       final ref = FirebaseDatabase.instance.ref('users/$uid');
       final snapshot = await ref.get();
-
       if (snapshot.exists) {
         final data = snapshot.value as Map<dynamic, dynamic>;
         final first = data['firstName']?.toString() ?? '';
         final last = data['lastName']?.toString() ?? '';
         final name = '$first $last'.trim();
         final isAdmin = data['isAdmin'] == true;
-        
-        return UserData(name: name.isEmpty ? 'User' : name, isAdmin: isAdmin);
+        return UserData(
+            name: name.isEmpty ? 'User' : name, isAdmin: isAdmin);
       }
       return UserData(name: 'User', isAdmin: false);
     } catch (e) {
@@ -219,7 +198,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }
   }
 
-  /// 🔹 Loading screen design
   Widget _buildLoadingScreen() {
     return Scaffold(
       backgroundColor: const Color.fromARGB(255, 16, 52, 90),
@@ -243,47 +221,34 @@ class _AuthWrapperState extends State<AuthWrapper> {
                   ),
                 ],
               ),
-              child: const Icon(
-                Icons.security_rounded,
-                color: Colors.white,
-                size: 40,
-              ),
+              child: const Icon(Icons.security_rounded,
+                  color: Colors.white, size: 40),
             ),
             const SizedBox(height: 30),
-            Text(
-              'AutoSure',
-              style: GoogleFonts.poppins(
-                color: Colors.white,
-                fontSize: 32,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.2,
-              ),
-            ),
+            Text('AutoSure',
+                style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.2)),
             const SizedBox(height: 10),
-            Text(
-              'Security in Motion',
-              style: GoogleFonts.poppins(
-                color: Colors.white70,
-                fontSize: 16,
-              ),
-            ),
+            Text('Security in Motion',
+                style:
+                    GoogleFonts.poppins(color: Colors.white70, fontSize: 16)),
             const SizedBox(height: 30),
             const SizedBox(
               width: 24,
               height: 24,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.blueAccent),
+                valueColor:
+                    AlwaysStoppedAnimation<Color>(Colors.blueAccent),
               ),
             ),
             const SizedBox(height: 20),
-            Text(
-              'Loading...',
-              style: GoogleFonts.poppins(
-                color: Colors.white70,
-                fontSize: 14,
-              ),
-            ),
+            Text('Loading...',
+                style:
+                    GoogleFonts.poppins(color: Colors.white70, fontSize: 14)),
           ],
         ),
       ),
@@ -299,29 +264,19 @@ class _AuthWrapperState extends State<AuthWrapper> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
-                Icons.warning_amber_rounded,
-                color: Colors.orange,
-                size: 64,
-              ),
+              const Icon(Icons.warning_amber_rounded,
+                  color: Colors.orange, size: 64),
               const SizedBox(height: 20),
-              Text(
-                'Something went wrong',
-                style: GoogleFonts.poppins(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              Text('Something went wrong',
+                  style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600)),
               const SizedBox(height: 10),
-              Text(
-                error,
-                style: GoogleFonts.poppins(
-                  color: Colors.white70,
-                  fontSize: 14,
-                ),
-                textAlign: TextAlign.center,
-              ),
+              Text(error,
+                  style: GoogleFonts.poppins(
+                      color: Colors.white70, fontSize: 14),
+                  textAlign: TextAlign.center),
               const SizedBox(height: 20),
               ElevatedButton(
                 onPressed: _checkAuthState,
@@ -338,6 +293,5 @@ class _AuthWrapperState extends State<AuthWrapper> {
 class UserData {
   final String name;
   final bool isAdmin;
-
   UserData({required this.name, required this.isAdmin});
 }

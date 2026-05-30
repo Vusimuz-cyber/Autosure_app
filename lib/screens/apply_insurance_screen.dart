@@ -9,12 +9,12 @@ import 'advanced_vehicle_capture.dart';
 
 class ApplyInsuranceScreen extends StatefulWidget {
   final Map<String, dynamic>? initialQuoteData;
-  final Map<String, dynamic>? quoteData; // Add this line
+  final Map<String, dynamic>? quoteData;
 
   const ApplyInsuranceScreen({
     super.key,
     this.initialQuoteData,
-    this.quoteData, // Add this line
+    this.quoteData,
   });
 
   @override
@@ -22,19 +22,17 @@ class ApplyInsuranceScreen extends StatefulWidget {
 }
 
 class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
-  // Form controllers
   final TextEditingController _idController = TextEditingController();
   final TextEditingController _contactController = TextEditingController();
   final TextEditingController _addressController = TextEditingController();
   final TextEditingController _coverDurationController = TextEditingController();
 
-  // Form state
   bool _infoConfirmed = false;
   bool _termsAgreed = false;
   bool _isSubmitting = false;
   bool _showQuoteDetails = true;
 
-  // File upload state
+  // UI state — which docs are uploaded
   Map<String, bool> _uploadedFiles = {
     'id_document': false,
     'proof_of_address': false,
@@ -42,6 +40,7 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
     'vehicle_registration': false,
   };
 
+  // Display filenames
   Map<String, String> _fileNames = {
     'id_document': '',
     'proof_of_address': '',
@@ -56,24 +55,28 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
     'vehicle_registration': false,
   };
 
-  final DatabaseReference _applicationsRef = FirebaseDatabase.instance.ref('insurance_applications');
-  final FirebaseStorage _storage = FirebaseStorage.instance;
+  // FIX: actual Firebase Storage download URLs — this is what the admin sees
+  Map<String, String> _fileUrls = {};
 
-  // Cover duration options
-  final List<String> _coverDurations = ['12 Months', '6 Months', '3 Months', '1 Month'];
+  // FIX: vehicle photo URLs from 3D scan (up to 12 shots)
+  Map<String, String> _vehiclePhotoUrls = {};
+
+  final DatabaseReference _applicationsRef =
+      FirebaseDatabase.instance.ref('insurance_applications');
+
+  final List<String> _coverDurations = [
+    '12 Months',
+    '6 Months',
+    '3 Months',
+    '1 Month'
+  ];
 
   @override
   void initState() {
     super.initState();
-    _initializeFormWithPreviousData();
   }
 
-  void _initializeFormWithPreviousData() {
-    if (widget.initialQuoteData != null) {
-      final quoteData = widget.initialQuoteData!;
-      
-    }
-  }
+  // ── File upload ─────────────────────────────────────────────────────────────
 
   Future<void> _uploadFile(String documentType) async {
     try {
@@ -81,41 +84,70 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
         type: FileType.custom,
         allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
         allowMultiple: false,
+        withData: true, // required for Flutter Web to get bytes
       );
 
       if (result != null && result.files.isNotEmpty) {
-        PlatformFile file = result.files.first;
-        
+        final file = result.files.first;
+
         if (file.size > 5 * 1024 * 1024) {
-          _showErrorSnackbar('File too large. Use smaller files (<5MB)');
+          _showErrorSnackbar('File too large. Maximum size is 5 MB.');
           return;
         }
 
-        setState(() {
-          _uploadingFiles[documentType] = true;
-        });
-
-        // Simulated upload for now
-        await _fastSimulatedUpload(documentType, file.name);
+        setState(() => _uploadingFiles[documentType] = true);
+        await _uploadToFirebase(documentType, file);
       }
     } catch (e) {
-      _showErrorSnackbar('Upload failed');
-      setState(() {
-        _uploadingFiles[documentType] = false;
-      });
+      _showErrorSnackbar('Could not pick file: $e');
+      setState(() => _uploadingFiles[documentType] = false);
     }
   }
 
-  Future<void> _fastSimulatedUpload(String documentType, String fileName) async {
-    await Future.delayed(const Duration(milliseconds: 500));
-    
-    setState(() {
-      _uploadedFiles[documentType] = true;
-      _fileNames[documentType] = fileName;
-      _uploadingFiles[documentType] = false;
-    });
-    
-    _showSuccessSnackbar('${_getDocumentDisplayName(documentType)} uploaded!');
+  Future<void> _uploadToFirebase(
+      String documentType, PlatformFile file) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      final bytes = file.bytes;
+
+      if (bytes == null || bytes.isEmpty) {
+        _showErrorSnackbar('Could not read file data. Please try again.');
+        setState(() => _uploadingFiles[documentType] = false);
+        return;
+      }
+
+      final uid = user?.uid ?? 'anonymous';
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final ext = file.extension ?? 'jpg';
+      final fileName = '${uid}_${documentType}_$ts.$ext';
+      final storageRef =
+          FirebaseStorage.instance.ref().child('documents/$fileName');
+
+      final contentType =
+          ext == 'pdf' ? 'application/pdf' : 'image/$ext';
+
+      await storageRef.putData(
+        bytes,
+        SettableMetadata(contentType: contentType),
+      );
+
+      // FIX: get and SAVE the download URL so the admin can view the file
+      final downloadURL = await storageRef.getDownloadURL();
+
+      setState(() {
+        _uploadedFiles[documentType] = true;
+        _fileNames[documentType] = file.name;
+        _fileUrls[documentType] = downloadURL; // ← actual URL saved here
+        _uploadingFiles[documentType] = false;
+      });
+
+      _showSuccessSnackbar(
+          '${_getDocumentDisplayName(documentType)} uploaded!');
+    } catch (e) {
+      print('Firebase upload error: $e');
+      _showErrorSnackbar('Upload failed: $e');
+      setState(() => _uploadingFiles[documentType] = false);
+    }
   }
 
   void _launchAdvancedCapture() async {
@@ -127,10 +159,14 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
             if (photos.isNotEmpty) {
               setState(() {
                 _uploadedFiles['vehicle_photos'] = true;
-                _fileNames['vehicle_photos'] = '12 Vehicle Photos (3D Scanned)';
+                _fileNames['vehicle_photos'] =
+                    '${photos.length} Vehicle Photos (3D Scanned)';
+                // FIX: save every photo URL so the admin can view them all
+                _vehiclePhotoUrls = Map<String, String>.from(photos);
                 _uploadingFiles['vehicle_photos'] = false;
               });
-              _showSuccessSnackbar('Vehicle 3D scan completed successfully!');
+              _showSuccessSnackbar(
+                  'Vehicle 3D scan completed — ${photos.length} photos captured!');
             }
           },
         ),
@@ -140,11 +176,16 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
 
   String _getDocumentDisplayName(String documentType) {
     switch (documentType) {
-      case 'id_document': return "ID Document";
-      case 'proof_of_address': return "Proof of Address";
-      case 'vehicle_photos': return "Vehicle Photos";
-      case 'vehicle_registration': return "Vehicle Registration";
-      default: return "Document";
+      case 'id_document':
+        return 'ID Document';
+      case 'proof_of_address':
+        return 'Proof of Address';
+      case 'vehicle_photos':
+        return 'Vehicle Photos';
+      case 'vehicle_registration':
+        return 'Vehicle Registration';
+      default:
+        return 'Document';
     }
   }
 
@@ -152,46 +193,105 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
     setState(() {
       _uploadedFiles[documentType] = false;
       _fileNames[documentType] = '';
+      _fileUrls.remove(documentType);
+      if (documentType == 'vehicle_photos') _vehiclePhotoUrls.clear();
     });
-    _showSuccessSnackbar('${_getDocumentDisplayName(documentType)} removed');
+    _showSuccessSnackbar(
+        '${_getDocumentDisplayName(documentType)} removed');
   }
 
   void _showSuccessSnackbar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: Colors.green,
+      behavior: SnackBarBehavior.floating,
+    ));
   }
 
   void _showErrorSnackbar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: Colors.red,
+      behavior: SnackBarBehavior.floating,
+    ));
   }
 
   bool _isFormValid() {
-    // Only require text fields to be filled, documents are optional for submission
     return _idController.text.isNotEmpty &&
-           _contactController.text.isNotEmpty &&
-           _addressController.text.isNotEmpty &&
-           _coverDurationController.text.isNotEmpty &&
-           _infoConfirmed && 
-           _termsAgreed;
+        _contactController.text.isNotEmpty &&
+        _addressController.text.isNotEmpty &&
+        _coverDurationController.text.isNotEmpty &&
+        _infoConfirmed &&
+        _termsAgreed;
   }
 
   void _removeQuote() {
-    setState(() {
-      _showQuoteDetails = false;
-    });
+    setState(() => _showQuoteDetails = false);
     _showSuccessSnackbar('Quote details removed');
   }
+
+  // ── Submit ───────────────────────────────────────────────────────────────────
+
+  Future<void> _submitApplication() async {
+    if (!_isFormValid()) return;
+    setState(() => _isSubmitting = true);
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('Please log in');
+
+      final applicationId = _applicationsRef.push().key;
+
+      final Map<String, dynamic> applicationData = {
+        'personalInfo': {
+          'idNumber': _idController.text,
+          'contactNumber': _contactController.text,
+          'address': _addressController.text,
+          'coverDuration': _coverDurationController.text,
+        },
+        // Boolean flags (for quick status checks)
+        'documents': _uploadedFiles,
+        'fileNames': _fileNames,
+        // FIX: actual Firebase Storage URLs so admin can view files
+        'fileUrls': _fileUrls,
+        // FIX: all 12 vehicle photos from 3D scan, keyed by shot type
+        'vehiclePhotoUrls': _vehiclePhotoUrls,
+        'status': 'submitted',
+        'submittedAt': DateTime.now().millisecondsSinceEpoch,
+        'userId': user.uid,
+        'userEmail': user.email ?? 'unknown',
+        'applicationId': applicationId,
+      };
+
+      final quoteData = widget.quoteData ?? widget.initialQuoteData;
+      if (quoteData != null) {
+        applicationData['quoteData'] = quoteData;
+      }
+
+      await _applicationsRef.child(applicationId!).set(applicationData);
+
+      _showSuccessSnackbar('🎉 Application submitted successfully!');
+
+      await Future.delayed(const Duration(seconds: 2));
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+              builder: (context) =>
+                  HomeScreen(username: user.displayName ?? 'User')),
+          (route) => false,
+        );
+      }
+    } catch (e) {
+      _showErrorSnackbar('Submission failed: ${e.toString()}');
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  // ── Build ────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -239,7 +339,7 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
           ),
           const SizedBox(width: 10),
           Text(
-            "Apply for Insurance",
+            'Apply for Insurance',
             style: GoogleFonts.poppins(
               fontSize: 24,
               fontWeight: FontWeight.w700,
@@ -278,12 +378,13 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                   color: Colors.greenAccent.withOpacity(0.2),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(Icons.rocket_launch, color: Colors.greenAccent, size: 24),
+                child: const Icon(Icons.rocket_launch,
+                    color: Colors.greenAccent, size: 24),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  "Finalize Your Application",
+                  'Finalize Your Application',
                   style: GoogleFonts.poppins(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
@@ -295,7 +396,7 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            "Complete your application in minutes - Documents can be uploaded later",
+            'Complete your application in minutes — documents can be uploaded later',
             style: GoogleFonts.poppins(
               fontSize: 14,
               color: Colors.greenAccent,
@@ -307,12 +408,11 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
   }
 
   Widget _buildQuoteCard() {
-    // Use either quoteData or initialQuoteData
     final quoteData = widget.quoteData ?? widget.initialQuoteData;
     if (quoteData == null || !_showQuoteDetails) return const SizedBox();
 
     final premiums = quoteData['premiums'] ?? {};
-    
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -331,7 +431,6 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header with remove button
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -343,11 +442,12 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                       color: Colors.blueAccent.withOpacity(0.2),
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(Icons.price_check, color: Colors.blueAccent, size: 18),
+                    child: const Icon(Icons.price_check,
+                        color: Colors.blueAccent, size: 18),
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    "Your Insurance Quote",
+                    'Your Insurance Quote',
                     style: GoogleFonts.poppins(
                       color: Colors.blueAccent,
                       fontSize: 18,
@@ -367,18 +467,17 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                     decoration: BoxDecoration(
                       color: Colors.redAccent.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                      border: Border.all(
+                          color: Colors.redAccent.withOpacity(0.3)),
                     ),
-                    child: Icon(Icons.close, color: Colors.redAccent, size: 16),
+                    child: const Icon(Icons.close,
+                        color: Colors.redAccent, size: 16),
                   ),
                 ),
               ),
             ],
           ),
-          
           const SizedBox(height: 15),
-          
-          // Vehicle Info in a modern layout
           Container(
             padding: const EdgeInsets.all(15),
             decoration: BoxDecoration(
@@ -387,23 +486,22 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
             ),
             child: Row(
               children: [
-                // Vehicle Icon
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: Colors.blueAccent.withOpacity(0.2),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(Icons.directions_car, color: Colors.blueAccent, size: 24),
+                  child: const Icon(Icons.directions_car,
+                      color: Colors.blueAccent, size: 24),
                 ),
                 const SizedBox(width: 12),
-                // Vehicle Details
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        "${quoteData['brand']} ${quoteData['model']}",
+                        '${quoteData['brand']} ${quoteData['model']}',
                         style: GoogleFonts.poppins(
                           color: Colors.white,
                           fontSize: 16,
@@ -412,14 +510,12 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        "${quoteData['year']} • ${quoteData['color']} • ${quoteData['regNumber'] ?? 'N/A'}",
+                        '${quoteData['year']} • ${quoteData['color']} • ${quoteData['regNumber'] ?? 'N/A'}',
                         style: GoogleFonts.poppins(
-                          color: Colors.white70,
-                          fontSize: 12,
-                        ),
+                            color: Colors.white70, fontSize: 12),
                       ),
                       Text(
-                        "Value: R${quoteData['value']}",
+                        'Value: R${quoteData['value']}',
                         style: GoogleFonts.poppins(
                           color: Colors.greenAccent,
                           fontSize: 12,
@@ -432,45 +528,47 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
               ],
             ),
           ),
-          
-          const SizedBox(height: 12),
-          
-          // Premium Cards
           if (premiums.isNotEmpty) ...[
-            Text(
-              "Premium Options",
-              style: GoogleFonts.poppins(
-                color: Colors.white70,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            const SizedBox(height: 12),
+            Text('Premium Options',
+                style: GoogleFonts.poppins(
+                    color: Colors.white70,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
             Wrap(
               spacing: 10,
               runSpacing: 10,
               children: [
                 if (premiums['comprehensive'] != null)
-                  _buildPremiumChip("Comprehensive", "R${premiums['comprehensive']?.toStringAsFixed(0)}", Colors.blueAccent),
+                  _buildPremiumChip(
+                      'Comprehensive',
+                      'R${(premiums['comprehensive'] as num).toStringAsFixed(0)}',
+                      Colors.blueAccent),
                 if (premiums['smart'] != null)
-                  _buildPremiumChip("Smart Plan", "R${premiums['smart']?.toStringAsFixed(0)}", Colors.greenAccent),
+                  _buildPremiumChip(
+                      'Smart Plan',
+                      'R${(premiums['smart'] as num).toStringAsFixed(0)}',
+                      Colors.greenAccent),
                 if (premiums['third_party'] != null)
-                  _buildPremiumChip("Third Party", "R${premiums['third_party']?.toStringAsFixed(0)}", Colors.orangeAccent),
+                  _buildPremiumChip(
+                      'Third Party',
+                      'R${(premiums['third_party'] as num).toStringAsFixed(0)}',
+                      Colors.orangeAccent),
               ],
             ),
           ],
-          
           const SizedBox(height: 12),
-          
-          // Location and Coverage
           Row(
             children: [
               Expanded(
-                child: _buildDetailItem(Icons.location_on, "Location", "${quoteData['province']}, ${quoteData['place']}"),
+                child: _buildDetailItem(Icons.location_on, 'Location',
+                    '${quoteData['province']}, ${quoteData['place']}'),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: _buildDetailItem(Icons.security, "Coverage", quoteData['coverageType'] ?? 'Comprehensive'),
+                child: _buildDetailItem(Icons.security, 'Coverage',
+                    quoteData['coverageType'] ?? 'Comprehensive'),
               ),
             ],
           ),
@@ -490,23 +588,17 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            title,
-            style: GoogleFonts.poppins(
-              color: color,
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          Text(title,
+              style: GoogleFonts.poppins(
+                  color: color,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600)),
           const SizedBox(width: 4),
-          Text(
-            price,
-            style: GoogleFonts.poppins(
-              color: Colors.white,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          Text(price,
+              style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700)),
         ],
       ),
     );
@@ -527,23 +619,16 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  label,
-                  style: GoogleFonts.poppins(
-                    color: Colors.white70,
-                    fontSize: 10,
-                  ),
-                ),
-                Text(
-                  value,
-                  style: GoogleFonts.poppins(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                Text(label,
+                    style: GoogleFonts.poppins(
+                        color: Colors.white70, fontSize: 10)),
+                Text(value,
+                    style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
               ],
             ),
           ),
@@ -564,43 +649,42 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                 color: Colors.greenAccent.withOpacity(0.2),
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.person, color: Colors.greenAccent, size: 18),
+              child: const Icon(Icons.person,
+                  color: Colors.greenAccent, size: 18),
             ),
             const SizedBox(width: 8),
-            Text(
-              "Personal Information",
-              style: GoogleFonts.poppins(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
-            ),
+            Text('Personal Information',
+                style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white)),
           ],
         ),
         const SizedBox(height: 15),
-        _buildAdvancedTextField(_idController, "ID Number", Icons.badge, "Enter your ID or passport number"),
+        _buildTextField(_idController, 'ID Number', Icons.badge,
+            'Enter your ID or passport number'),
         const SizedBox(height: 12),
-        _buildAdvancedTextField(_contactController, "Contact Number", Icons.phone, "Your mobile number"),
+        _buildTextField(_contactController, 'Contact Number', Icons.phone,
+            'Your mobile number'),
         const SizedBox(height: 12),
-        _buildAdvancedTextField(_addressController, "Residential Address", Icons.home, "Your full residential address"),
+        _buildTextField(_addressController, 'Residential Address', Icons.home,
+            'Your full residential address'),
         const SizedBox(height: 12),
         _buildCoverDurationDropdown(),
       ],
     );
   }
 
-  Widget _buildAdvancedTextField(TextEditingController controller, String label, IconData icon, String hint) {
+  Widget _buildTextField(TextEditingController controller, String label,
+      IconData icon, String hint) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: GoogleFonts.poppins(
-            color: Colors.white70,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        Text(label,
+            style: GoogleFonts.poppins(
+                color: Colors.white70,
+                fontSize: 14,
+                fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
         Container(
           height: 55,
@@ -626,12 +710,15 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
               Expanded(
                 child: TextField(
                   controller: controller,
-                  style: GoogleFonts.poppins(color: Colors.white, fontSize: 14),
+                  style: GoogleFonts.poppins(
+                      color: Colors.white, fontSize: 14),
                   decoration: InputDecoration(
                     hintText: hint,
-                    hintStyle: GoogleFonts.poppins(color: Colors.white54, fontSize: 14),
+                    hintStyle: GoogleFonts.poppins(
+                        color: Colors.white54, fontSize: 14),
                     border: InputBorder.none,
-                    contentPadding: const EdgeInsets.only(right: 15),
+                    contentPadding:
+                        const EdgeInsets.only(right: 15),
                   ),
                 ),
               ),
@@ -646,21 +733,16 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Cover Duration",
-          style: GoogleFonts.poppins(
-            color: Colors.white70,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        Text('Cover Duration',
+            style: GoogleFonts.poppins(
+                color: Colors.white70,
+                fontSize: 14,
+                fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
         Container(
           height: 55,
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
               colors: [
                 Colors.white.withOpacity(0.1),
                 Colors.white.withOpacity(0.05),
@@ -674,34 +756,38 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
               Container(
                 width: 50,
                 alignment: Alignment.center,
-                child: Icon(Icons.calendar_today, color: Colors.white54, size: 20),
+                child: const Icon(Icons.calendar_today,
+                    color: Colors.white54, size: 20),
               ),
               Expanded(
                 child: DropdownButtonFormField<String>(
-                  value: _coverDurationController.text.isEmpty ? null : _coverDurationController.text,
-                  items: _coverDurations.map((String duration) {
-                    return DropdownMenuItem<String>(
-                      value: duration,
-                      child: Text(
-                        duration,
-                        style: GoogleFonts.poppins(color: Colors.white, fontSize: 14),
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (String? newValue) {
-                    setState(() {
-                      _coverDurationController.text = newValue!;
-                    });
-                  },
-                  dropdownColor: const Color.fromARGB(255, 16, 52, 90),
+                  value: _coverDurationController.text.isEmpty
+                      ? null
+                      : _coverDurationController.text,
+                  items: _coverDurations
+                      .map((d) => DropdownMenuItem(
+                            value: d,
+                            child: Text(d,
+                                style: GoogleFonts.poppins(
+                                    color: Colors.white,
+                                    fontSize: 14)),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setState(
+                      () => _coverDurationController.text = v!),
+                  dropdownColor:
+                      const Color.fromARGB(255, 16, 52, 90),
                   style: GoogleFonts.poppins(color: Colors.white),
                   decoration: InputDecoration(
-                    hintText: "Select cover duration",
-                    hintStyle: GoogleFonts.poppins(color: Colors.white54, fontSize: 14),
+                    hintText: 'Select cover duration',
+                    hintStyle: GoogleFonts.poppins(
+                        color: Colors.white54, fontSize: 14),
                     border: InputBorder.none,
-                    contentPadding: const EdgeInsets.only(right: 15),
+                    contentPadding:
+                        const EdgeInsets.only(right: 15),
                   ),
-                  icon: Icon(Icons.arrow_drop_down, color: Colors.white70),
+                  icon: const Icon(Icons.arrow_drop_down,
+                      color: Colors.white70),
                 ),
               ),
             ],
@@ -723,35 +809,34 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                 color: Colors.orangeAccent.withOpacity(0.2),
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.attach_file, color: Colors.orangeAccent, size: 18),
+              child: const Icon(Icons.attach_file,
+                  color: Colors.orangeAccent, size: 18),
             ),
             const SizedBox(width: 8),
-            Text(
-              "Document Uploads (Optional)",
-              style: GoogleFonts.poppins(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
-            ),
+            Text('Document Uploads (Optional)',
+                style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white)),
           ],
         ),
         const SizedBox(height: 8),
         Text(
-          "You can upload these documents now or later - Application can be submitted without them",
+          'Upload documents now or later. Photos are uploaded to secure storage so the admin can review them.',
           style: GoogleFonts.poppins(
-            fontSize: 12,
-            color: Colors.greenAccent,
-          ),
+              fontSize: 12, color: Colors.greenAccent),
         ),
         const SizedBox(height: 15),
-        _buildUploadItem("id_document", "ID Document", Icons.badge, Colors.blueAccent),
+        _buildUploadItem(
+            'id_document', 'ID Document', Icons.badge, Colors.blueAccent),
         const SizedBox(height: 10),
-        _buildUploadItem("proof_of_address", "Proof of Address", Icons.home_work, Colors.greenAccent),
+        _buildUploadItem('proof_of_address', 'Proof of Address',
+            Icons.home_work, Colors.greenAccent),
         const SizedBox(height: 10),
         _buildVehiclePhotosUpload(),
         const SizedBox(height: 10),
-        _buildUploadItem("vehicle_registration", "Vehicle Registration", Icons.description, Colors.purpleAccent),
+        _buildUploadItem('vehicle_registration', 'Vehicle Registration',
+            Icons.description, Colors.purpleAccent),
       ],
     );
   }
@@ -763,65 +848,60 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
 
     return Column(
       children: [
-        // Regular Upload Option
         Container(
           padding: const EdgeInsets.all(15),
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.05),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.orangeAccent.withOpacity(0.3)),
+            border:
+                Border.all(color: Colors.orangeAccent.withOpacity(0.3)),
           ),
           child: Row(
             children: [
-              Icon(Icons.camera_alt, color: Colors.orangeAccent, size: 24),
+              const Icon(Icons.camera_alt,
+                  color: Colors.orangeAccent, size: 24),
               const SizedBox(width: 15),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      "Vehicle Photos",
-                      style: GoogleFonts.poppins(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
+                    Text('Vehicle Photos',
+                        style: GoogleFonts.poppins(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white)),
                     if (isUploaded && fileName.isNotEmpty)
-                      Text(
-                        fileName,
-                        style: GoogleFonts.poppins(
-                          fontSize: 12,
-                          color: Colors.greenAccent,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      Text(fileName,
+                          style: GoogleFonts.poppins(
+                              fontSize: 12,
+                              color: Colors.greenAccent),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
                     if (isUploading)
-                      Text(
-                        "Uploading...",
-                        style: GoogleFonts.poppins(
-                          fontSize: 12,
-                          color: Colors.orangeAccent,
-                        ),
-                      ),
+                      Text('Uploading…',
+                          style: GoogleFonts.poppins(
+                              fontSize: 12,
+                              color: Colors.orangeAccent)),
                   ],
                 ),
               ),
               if (isUploading)
-                SizedBox(
+                const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orangeAccent),
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.orangeAccent),
                 )
               else if (isUploaded)
                 Row(
                   children: [
-                    Icon(Icons.check_circle, color: Colors.green, size: 22),
+                    const Icon(Icons.check_circle,
+                        color: Colors.green, size: 22),
                     const SizedBox(width: 8),
                     GestureDetector(
                       onTap: () => _removeFile('vehicle_photos'),
-                      child: Icon(Icons.close, color: Colors.red, size: 18),
+                      child: const Icon(Icons.close,
+                          color: Colors.red, size: 18),
                     ),
                   ],
                 )
@@ -833,32 +913,33 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                     onTap: () => _uploadFile('vehicle_photos'),
                     borderRadius: BorderRadius.circular(8),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      child: Text(
-                        "Upload",
-                        style: GoogleFonts.poppins(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      child: Text('Upload',
+                          style: GoogleFonts.poppins(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600)),
                     ),
                   ),
                 ),
             ],
           ),
         ),
-        
-        // 3D Capture Recommendation
         const SizedBox(height: 10),
+        // 3D Scan option
         Container(
           padding: const EdgeInsets.all(15),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.purpleAccent.withOpacity(0.2), Colors.blueAccent.withOpacity(0.1)],
+              colors: [
+                Colors.purpleAccent.withOpacity(0.2),
+                Colors.blueAccent.withOpacity(0.1)
+              ],
             ),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.purpleAccent.withOpacity(0.4)),
+            border: Border.all(
+                color: Colors.purpleAccent.withOpacity(0.4)),
           ),
           child: Row(
             children: [
@@ -868,28 +949,23 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                   color: Colors.purpleAccent.withOpacity(0.2),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(Icons.photo_camera, color: Colors.purpleAccent, size: 20),
+                child: const Icon(Icons.photo_camera,
+                    color: Colors.purpleAccent, size: 20),
               ),
               const SizedBox(width: 15),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text('Recommended: 3D Vehicle Capture',
+                        style: GoogleFonts.poppins(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white)),
                     Text(
-                      "Recommended: 3D Vehicle Capture",
-                      style: GoogleFonts.poppins(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                    Text(
-                      "Enhanced documentation for faster processing",
-                      style: GoogleFonts.poppins(
-                        fontSize: 12,
-                        color: Colors.white70,
-                      ),
-                    ),
+                        'Enhanced documentation for faster processing',
+                        style: GoogleFonts.poppins(
+                            fontSize: 12, color: Colors.white70)),
                   ],
                 ),
               ),
@@ -900,25 +976,26 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                   onTap: _launchAdvancedCapture,
                   borderRadius: BorderRadius.circular(10),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 8),
                     decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Colors.purpleAccent, Colors.blueAccent],
-                      ),
+                      gradient: const LinearGradient(
+                          colors: [
+                            Colors.purpleAccent,
+                            Colors.blueAccent
+                          ]),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.camera_enhance, color: Colors.white, size: 16),
+                        const Icon(Icons.camera_enhance,
+                            color: Colors.white, size: 16),
                         const SizedBox(width: 6),
-                        Text(
-                          "3D SCAN",
-                          style: GoogleFonts.poppins(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                        Text('3D SCAN',
+                            style: GoogleFonts.poppins(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600)),
                       ],
                     ),
                   ),
@@ -931,7 +1008,8 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
     );
   }
 
-  Widget _buildUploadItem(String documentType, String title, IconData icon, Color color) {
+  Widget _buildUploadItem(
+      String documentType, String title, IconData icon, Color color) {
     final isUploaded = _uploadedFiles[documentType]!;
     final isUploading = _uploadingFiles[documentType]!;
     final fileName = _fileNames[documentType]!;
@@ -951,32 +1029,21 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: GoogleFonts.poppins(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
+                Text(title,
+                    style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white)),
                 if (isUploaded && fileName.isNotEmpty)
-                  Text(
-                    fileName,
-                    style: GoogleFonts.poppins(
-                      fontSize: 12,
-                      color: Colors.greenAccent,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  Text(fileName,
+                      style: GoogleFonts.poppins(
+                          fontSize: 12, color: Colors.greenAccent),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
                 if (isUploading)
-                  Text(
-                    "Uploading...",
-                    style: GoogleFonts.poppins(
-                      fontSize: 12,
-                      color: Colors.orangeAccent,
-                    ),
-                  ),
+                  Text('Uploading…',
+                      style: GoogleFonts.poppins(
+                          fontSize: 12, color: Colors.orangeAccent)),
               ],
             ),
           ),
@@ -984,16 +1051,19 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
             SizedBox(
               width: 18,
               height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2, color: color),
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: color),
             )
           else if (isUploaded)
             Row(
               children: [
-                Icon(Icons.check_circle, color: Colors.green, size: 22),
+                const Icon(Icons.check_circle,
+                    color: Colors.green, size: 22),
                 const SizedBox(width: 8),
                 GestureDetector(
                   onTap: () => _removeFile(documentType),
-                  child: Icon(Icons.close, color: Colors.red, size: 18),
+                  child: const Icon(Icons.close,
+                      color: Colors.red, size: 18),
                 ),
               ],
             )
@@ -1005,15 +1075,13 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                 onTap: () => _uploadFile(documentType),
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  child: Text(
-                    "Upload",
-                    style: GoogleFonts.poppins(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
+                  child: Text('Upload',
+                      style: GoogleFonts.poppins(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600)),
                 ),
               ),
             ),
@@ -1034,36 +1102,35 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                 color: Colors.redAccent.withOpacity(0.2),
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.verified_user, color: Colors.redAccent, size: 18),
+              child: const Icon(Icons.verified_user,
+                  color: Colors.redAccent, size: 18),
             ),
             const SizedBox(width: 8),
-            Text(
-              "Declaration",
-              style: GoogleFonts.poppins(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
-            ),
+            Text('Declaration',
+                style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white)),
           ],
         ),
         const SizedBox(height: 15),
-        _buildAdvancedCheckbox(
-          "I confirm all information provided is true and accurate to the best of my knowledge",
+        _buildCheckbox(
+          'I confirm all information provided is true and accurate to the best of my knowledge',
           _infoConfirmed,
-          (value) => setState(() => _infoConfirmed = value ?? false),
+          (v) => setState(() => _infoConfirmed = v ?? false),
         ),
         const SizedBox(height: 10),
-        _buildAdvancedCheckbox(
-          "I agree to the Terms & Conditions and Privacy Policy of AutoSure Insurance", 
+        _buildCheckbox(
+          'I agree to the Terms & Conditions and Privacy Policy of AutoSure Insurance',
           _termsAgreed,
-          (value) => setState(() => _termsAgreed = value ?? false),
+          (v) => setState(() => _termsAgreed = v ?? false),
         ),
       ],
     );
   }
 
-  Widget _buildAdvancedCheckbox(String title, bool value, ValueChanged<bool?> onChanged) {
+  Widget _buildCheckbox(
+      String title, bool value, ValueChanged<bool?> onChanged) {
     return Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(12),
@@ -1073,10 +1140,14 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: value ? Colors.greenAccent.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+            color: value
+                ? Colors.greenAccent.withOpacity(0.1)
+                : Colors.white.withOpacity(0.05),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: value ? Colors.greenAccent.withOpacity(0.3) : Colors.white.withOpacity(0.1),
+              color: value
+                  ? Colors.greenAccent.withOpacity(0.3)
+                  : Colors.white.withOpacity(0.1),
             ),
           ),
           child: Row(
@@ -1088,20 +1159,22 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                   color: value ? Colors.greenAccent : Colors.transparent,
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(
-                    color: value ? Colors.greenAccent : Colors.white54,
-                  ),
+                      color:
+                          value ? Colors.greenAccent : Colors.white54),
                 ),
-                child: value ? Icon(Icons.check, color: Colors.white, size: 16) : null,
+                child: value
+                    ? const Icon(Icons.check,
+                        color: Colors.white, size: 16)
+                    : null,
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  title,
-                  style: GoogleFonts.poppins(
-                    color: value ? Colors.greenAccent : Colors.white70,
-                    fontSize: 13,
-                  ),
-                ),
+                child: Text(title,
+                    style: GoogleFonts.poppins(
+                      color:
+                          value ? Colors.greenAccent : Colors.white70,
+                      fontSize: 13,
+                    )),
               ),
             ],
           ),
@@ -1112,28 +1185,28 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
 
   Widget _buildSubmitButton() {
     final isEnabled = _isFormValid() && !_isSubmitting;
-    
+
     return Column(
       children: [
-        if (!isEnabled && !_isSubmitting) 
+        if (!isEnabled && !_isSubmitting)
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.orangeAccent.withOpacity(0.1),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.orangeAccent.withOpacity(0.3)),
+              border:
+                  Border.all(color: Colors.orangeAccent.withOpacity(0.3)),
             ),
             child: Row(
               children: [
-                Icon(Icons.info, color: Colors.orangeAccent, size: 16),
+                const Icon(Icons.info,
+                    color: Colors.orangeAccent, size: 16),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'Fill in all required fields and agree to declarations to submit',
                     style: GoogleFonts.poppins(
-                      color: Colors.orangeAccent,
-                      fontSize: 12,
-                    ),
+                        color: Colors.orangeAccent, fontSize: 12),
                   ),
                 ),
               ],
@@ -1157,7 +1230,10 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                         end: Alignment.bottomRight,
                       )
                     : LinearGradient(
-                        colors: [Colors.grey.shade600, Colors.grey.shade400],
+                        colors: [
+                          Colors.grey.shade600,
+                          Colors.grey.shade400
+                        ],
                       ),
                 boxShadow: isEnabled
                     ? [
@@ -1174,35 +1250,32 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
                     ? Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          SizedBox(
+                          const SizedBox(
                             width: 20,
                             height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white),
                           ),
                           const SizedBox(width: 12),
-                          Text(
-                            "SUBMITTING...",
-                            style: GoogleFonts.poppins(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                          ),
+                          Text('SUBMITTING…',
+                              style: GoogleFonts.poppins(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white)),
                         ],
                       )
                     : Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                          const Icon(Icons.send_rounded,
+                              color: Colors.white, size: 20),
                           const SizedBox(width: 12),
-                          Text(
-                            "SUBMIT APPLICATION",
-                            style: GoogleFonts.poppins(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                          ),
+                          Text('SUBMIT APPLICATION',
+                              style: GoogleFonts.poppins(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white)),
                         ],
                       ),
               ),
@@ -1212,59 +1285,5 @@ class _ApplyInsuranceScreenState extends State<ApplyInsuranceScreen> {
       ],
     );
   }
-
-  Future<void> _submitApplication() async {
-    if (!_isFormValid()) return;
-
-    setState(() => _isSubmitting = true);
-
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) throw Exception('Please log in');
-
-      // Generate a unique application ID
-      final applicationId = _applicationsRef.push().key;
-      
-      Map<String, dynamic> applicationData = {
-        'personalInfo': {
-          'idNumber': _idController.text,
-          'contactNumber': _contactController.text,
-          'address': _addressController.text,
-          'coverDuration': _coverDurationController.text,
-        },
-        'documents': _uploadedFiles,
-        'fileNames': _fileNames,
-        'status': 'submitted',
-        'submittedAt': DateTime.now().millisecondsSinceEpoch,
-        'userId': user.uid,
-        'userEmail': user.email ?? 'unknown',
-        'applicationId': applicationId,
-      };
-
-      // Use either quoteData or initialQuoteData
-      final quoteData = widget.quoteData ?? widget.initialQuoteData;
-      if (quoteData != null) {
-        applicationData['quoteData'] = quoteData;
-      }
-
-      // Save under a unique application ID for proper querying
-      await _applicationsRef.child(applicationId!).set(applicationData);
-      
-      _showSuccessSnackbar('🎉 Application submitted successfully!');
-      
-      await Future.delayed(const Duration(seconds: 2));
-      if (mounted) {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (context) => HomeScreen(username: user.displayName ?? 'User')),
-          (route) => false,
-        );
-      }
-
-    } catch (e) {
-      _showErrorSnackbar('Submission failed: ${e.toString()}');
-    } finally {
-      if (mounted) setState(() => _isSubmitting = false);
-    }
-  }
 }
+
